@@ -1,0 +1,1 @@
+export default async function handler(req,res){res.status(200).json({appPnL:0,winRate:0,maxDrawdown:0})}
