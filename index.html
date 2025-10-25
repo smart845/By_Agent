@@ -1,0 +1,626 @@
+<!DOCTYPE html>
+<html lang="ru">
+<head>
+  <meta charset="utf-8"/>
+  <meta name="viewport" content="width=device-width, initial-scale=1, maximum-scale=1, viewport-fit=cover"/>
+  <meta name="theme-color" content="#000000"/>
+  <title>ByAgent Terminal</title>
+  <script src="https://telegram.org/js/telegram-web-app.js"></script>
+  <!-- TradingView Advanced Chart -->
+  <script src="https://s3.tradingview.com/tv.js"></script>
+  <style>
+/* --- Layout & theme (mobile-friendly) --- */
+html, body { height:auto; min-height:100%; -webkit-text-size-adjust:100%; }
+:root{
+  --bg0:#000000; --bg1:#0a0a0a; --bg2:#151515;
+  --card:#1a1a1a; --muted:#a0a0a0; --text:#e0e0e0;
+  --border:#404040;
+  --green:#22c55e; --red:#ef4444; --blue:#38bdf8;
+  --silver:#c0c0c0; --metal:#8a8a8a;
+}
+body{
+  margin:0; color:var(--text);
+  background:
+    radial-gradient(1200px 600px at 60% -12%, rgba(128,128,128,.08), transparent 55%),
+    radial-gradient(900px 520px at 5% 15%, rgba(96,96,96,.06), transparent 60%),
+    linear-gradient(180deg, #0a0a0a, #000000);
+  font-family: ui-sans-serif,system-ui,-apple-system,Segoe UI,Roboto,Helvetica Neue,Arial;
+}
+.wrap{max-width:1220px; margin:8px auto; padding:0 12px 28px;}
+.card{
+  background:linear-gradient(135deg, rgba(64,64,64,.15), rgba(32,32,32,.1));
+  border:1px solid var(--border); border-radius:16px; padding:10px;
+  box-shadow:0 10px 40px rgba(0,0,0,.6), inset 0 0 0 1px rgba(192,192,192,.08);
+}
+.row{display:flex; gap:8px; flex-wrap:wrap; align-items:center;}
+.spacer{flex:1 1 auto;}
+.input{
+  flex:1 1 260px; background:#0a0a0a; border:1px solid var(--border);
+  color:#e0e0e0; border-radius:12px; padding:12px; outline:none;
+  box-shadow:inset 0 0 0 1px rgba(192,192,192,.15);
+}
+.input:focus{ box-shadow:0 0 0 2px rgba(192,192,192,.35), inset 0 0 0 1px rgba(192,192,192,.25); }
+.btn{
+  background:linear-gradient(90deg, #0a0a0a 0%, #2a2a2a 25%, #3a3a3a 50%, #2a2a2a 75%, #0a0a0a 100%);
+  background-size: 300% 100%;
+  color:#e0e0e0; border:2px solid rgba(192,192,192,.5);
+  border-radius:14px; padding:11px 12px; cursor:pointer; user-select:none; text-align:center;
+  box-shadow:0 0 0 1px rgba(192,192,192,.3), 0 0 12px rgba(192,192,192,.2), inset 0 0 0 1px rgba(192,192,192,.15);
+  transition: transform .14s ease;
+  white-space:nowrap; overflow:hidden; text-overflow:ellipsis;
+  animation: shimmerFlow 6s ease-in-out infinite, borderPulse 6s ease-in-out infinite, glowPulse 6s ease-in-out infinite;
+}
+.btn:hover{ transform: translateY(-2px); filter: brightness(1.15); }
+
+@keyframes shimmerFlow {
+  0% {
+    background-position: 0% 50%;
+  }
+  50% {
+    background-position: 100% 50%;
+  }
+  100% {
+    background-position: 0% 50%;
+  }
+}
+
+@keyframes borderPulse {
+  0%, 100% {
+    border-color: rgba(192,192,192,.4);
+  }
+  50% {
+    border-color: rgba(220,220,220,.7);
+  }
+}
+
+@keyframes glowPulse {
+  0%, 100% {
+    box-shadow:0 0 0 1px rgba(192,192,192,.3), 0 0 12px rgba(192,192,192,.2), inset 0 0 0 1px rgba(192,192,192,.15);
+  }
+  50% {
+    box-shadow:0 0 0 1px rgba(192,192,192,.5), 0 0 20px rgba(192,192,192,.4), inset 0 0 0 1px rgba(192,192,192,.3);
+  }
+}
+.seg{display:flex; gap:6px; padding:4px; border-radius:12px; background:#0a0a0a; border:1px solid var(--border); flex-wrap:wrap}
+.seg button{
+  background:linear-gradient(90deg, transparent 0%, rgba(64,64,64,.1) 25%, rgba(96,96,96,.2) 50%, rgba(64,64,64,.1) 75%, transparent 100%);
+  background-size: 300% 100%;
+  color:#c0c0c0; border:2px solid rgba(192,192,192,.3); padding:6px 10px; border-radius:10px; cursor:pointer;
+  animation: shimmerFlow 6s ease-in-out infinite, borderPulse 6s ease-in-out infinite;
+}
+.seg button.active{
+  background:linear-gradient(90deg, rgba(96,96,96,.2) 0%, rgba(160,160,160,.3) 25%, rgba(192,192,192,.4) 50%, rgba(160,160,160,.3) 75%, rgba(96,96,96,.2) 100%);
+  background-size: 300% 100%;
+  color:#fff; border:2px solid rgba(192,192,192,.6);
+  box-shadow:inset 0 0 0 1px rgba(192,192,192,.4), 0 0 15px rgba(192,192,192,.3);
+  animation: shimmerFlow 6s ease-in-out infinite, activeGlowPulse 6s ease-in-out infinite, activeBorderPulse 6s ease-in-out infinite;
+}
+
+@keyframes activeGlowPulse {
+  0%, 100% {
+    box-shadow:inset 0 0 0 1px rgba(192,192,192,.4), 0 0 15px rgba(192,192,192,.3);
+  }
+  50% {
+    box-shadow:inset 0 0 0 1px rgba(192,192,192,.6), 0 0 25px rgba(192,192,192,.5);
+  }
+}
+
+@keyframes activeBorderPulse {
+  0%, 100% {
+    border-color: rgba(192,192,192,.6);
+  }
+  50% {
+    border-color: rgba(220,220,220,.9);
+  }
+}
+
+.badge{
+  border:1px solid var(--border); background:linear-gradient(180deg, #1a1a1a, #0f0f0f);
+  border-radius:12px; padding:6px 10px; color:#c0c0c0;
+  box-shadow:inset 0 0 0 1px rgba(192,192,192,.12);
+}
+.mini{font-size:12px; color:#a0a0a0;}
+.mono{font-family: ui-monospace, SFMono-Regular, Menlo, Monaco, Consolas, "Courier New", monospace;}
+
+/* "Pill" badges row like screenshot */
+.pills{display:flex; flex-wrap:wrap; gap:8px; margin-top:8px;}
+.pill{border:1px solid var(--border); border-radius:12px; padding:6px 10px; background:#0a0a0a; color:#c0c0c0}
+.pill .k{opacity:.75; margin-right:4px}
+
+/* Agent header to match screenshot */
+.agentHead{display:flex; align-items:center; gap:8px; margin-bottom:6px;}
+.dot{width:10px; height:10px; border-radius:50%; display:inline-block; background:var(--blue)}
+.h1{font-weight:800; letter-spacing:.4px}
+.sym{font-weight:800;}
+
+.ul-stat{list-style:none; padding-left:0; margin:10px 0 4px 0;}
+.ul-stat li{display:flex; align-items:center; gap:8px; margin:6px 0}
+.ul-stat li .bullet{width:6px; height:6px; border-radius:50%; background:#cbd5e1; display:inline-block}
+.ul-stat li .label{min-width:62px; opacity:.85}
+
+/* chart */
+#chartWrap{height:560px; border:1px solid var(--border); border-radius:14px; overflow:hidden; background:#000000; position:relative; margin-top:8px;}
+#tvchart{height:100%;}
+
+/* colors */
+.n-blue{ color:var(--blue); }
+.n-green{ color:var(--green); }
+.n-red{ color:var(--red); }
+
+/* Drawer (for future modules) */
+.drawer { position:absolute; inset:0; background: rgba(10, 10, 10, .96); border-radius: 14px; display:none; flex-direction: column; z-index: 10; opacity: 0; transform: translateY(40px); transition: opacity 0.3s ease, transform 0.3s ease; backdrop-filter: blur(8px); -webkit-backdrop-filter: blur(8px); }
+.drawer.show { display:flex; opacity: 1; transform: translateY(0); }
+.drawer.closing { opacity: 0; transform: translateY(60px); }
+.drawer .head { display:flex; align-items:center; justify-content:space-between; padding:8px 12px; border-bottom:1px solid var(--border); gap:8px; }
+.drawer .title { font-size:16px; font-weight:800; }
+.drawerBody { padding:10px; overflow:auto; height:100%; scroll-behavior:smooth; -webkit-overflow-scrolling: touch; }
+  </style>
+</head>
+<body>
+<div class="wrap">
+
+  <!-- SEARCH -->
+  <div class="card">
+    <div class="row">
+      <input id="sym" class="input mono" list="symList" placeholder="Поиск: BTC (авто → BTCUSDT) / BTCUSDT" spellcheck="false"/>
+      <datalist id="symList"></datalist>
+      <button class="btn" id="btnFind">Найти</button>
+    </div>
+
+    <div class="btn-group-top" style="display:flex; gap:8px; margin-top:8px;">
+      <button class="btn" id="btnWallet">Wallet</button>
+      <button class="btn" id="btnAlerts">Алерты</button>
+    </div>
+
+    <div class="neon-wrap" style="display:grid; grid-template-columns:1fr 1fr; gap:8px; margin-top:8px;">
+      <button class="btn">Копитрейдинг</button>
+      <button class="btn">Спреды</button>
+      <button class="btn">DeFi</button>
+      <button class="btn">Сигналы 10x</button>
+      <button class="btn">⭐ Избранное</button>
+      <button class="btn">Доходность App</button>
+      <button class="btn">Сетапы</button>
+      <button class="btn">Аномалии</button>
+      <button class="btn">Топ рост/падение</button>
+      <button class="btn">Листинги</button>
+    </div>
+  </div>
+
+  <!-- AGENT (visual like screenshot) -->
+  <div class="card" style="margin-top:10px;">
+    <div class="row" style="align-items:center;">
+      <div class="agentHead">
+        <span id="agentDot" class="dot"></span>
+        <span id="agentStateTxt" class="h1 mono n-blue">FLAT</span>
+      </div>
+      <div class="spacer"></div>
+      <div class="seg" id="autoSeg">
+        <button class="active" data-sec="5">5s</button>
+        <button data-sec="10">10s</button>
+        <button data-sec="15">15s</button>
+      </div>
+    </div>
+
+    <div style="margin-top:6px;">
+      <div id="agentSym" class="mono sym n-blue">BTCUSDT</div>
+    </div>
+
+    <ul class="ul-stat">
+      <li><span class="bullet"></span><span class="label mono">Entry:</span><span id="entryV" class="mono n-blue">—</span></li>
+      <li><span class="bullet"></span><span class="label mono">TP:</span><span id="tpV" class="mono n-green">—</span></li>
+      <li><span class="bullet"></span><span class="label mono">SL:</span><span id="slV" class="mono n-red">—</span></li>
+    </ul>
+
+    <div class="pills">
+      <div class="pill"><span class="k mono">Сигнал:</span><span id="sidePill" class="mono">—</span></div>
+      <div class="pill"><span class="k mono">Auto:</span><span id="autoLbl" class="mono">5s</span></div>
+      <div class="pill"><span class="k mono">Цена:</span><span id="lastV" class="mono n-blue">—</span></div>
+      <div class="pill"><span class="k mono">RSI14:</span><span id="rsiV" class="mono">—</span></div>
+      <div class="pill"><span class="k mono">EMA50:</span><span id="ema50V" class="mono">—</span></div>
+      <div class="pill"><span class="k mono">EMA200:</span><span id="ema200V" class="mono">—</span></div>
+      <div class="pill"><span class="k mono">MACD:</span><span id="macdV" class="mono">—</span></div>
+      <div class="pill"><span class="k mono">ATR:</span><span id="atrV" class="mono">—</span></div>
+      <div class="pill"><span class="k mono">RR:</span><span id="rrV" class="mono">—</span></div>
+      <div class="pill"><span class="k mono">Conf:</span><span id="confV" class="mono">—</span></div>
+      <div class="pill"><span class="k mono">WS:</span><span id="wsState" class="mono">offline</span></div>
+    </div>
+
+    <div id="chartWrap">
+      <div id="tvchart"></div>
+      <div class="drawer" id="drawer">
+        <div class="head">
+          <div class="title" id="drawerTitle">—</div>
+          <button class="btn" id="drawerClose">Закрыть</button>
+        </div>
+        <div class="drawerBody" id="drawerBody"></div>
+      </div>
+    </div>
+  </div>
+
+  <!-- OPEN INTEREST -->
+  <div class="card" id="oiCard" style="margin-top:10px;">
+    <div class="row" style="justify-content:space-between; align-items:center">
+      <div class="heading" id="oiHeader" style="margin:0">
+        Open Interest — <span id="oiTitleSym">BTCUSDT</span>
+        <span id="oiHint" class="mini mono n-blue" style="margin-left:8px;">—</span>
+      </div>
+      <div class="seg" id="oiSeg">
+        <button class="active" data-int="5min">5m</button>
+        <button data-int="15min">15m</button>
+        <button data-int="30min">30m</button>
+        <button data-int="1h">1h</button>
+        <button data-int="4h">4h</button>
+      </div>
+    </div>
+    <div class="mini" style="margin-top:8px;">Taker Buy: <span class="mono" id="takerBuy">—</span></div>
+    <div class="mini">Taker Sell: <span class="mono" id="takerSell">—</span></div>
+    <div class="mini">Open Interest: <span class="mono" id="oiNow">—</span></div>
+    <div class="mini">ΔOI: <span class="mono" id="oiDelta">—</span></div>
+    <div class="mini">ΔOI %: <span class="mono" id="oiDeltaPct">—</span></div>
+    <div class="mini">Funding Rate: <span class="mono" id="fundingNow">—</span></div>
+    <div class="mini muted" id="oiUpdated">Обновлено: —</div>
+  </div>
+</div>
+
+<script>
+// === Helpers ===
+const API = "https://api.bybit.com";
+const $ = (id) => document.getElementById(id);
+const fmt = (n, d=4) => (n===null||n===undefined? '—' : (+n).toLocaleString('ru-RU', {maximumFractionDigits:d}));
+const nowStr = () => new Date().toLocaleTimeString('ru-RU');
+
+const by = async (path, params = {}) => {
+  const url = new URL(API + path);
+  url.search = new URLSearchParams(params).toString();
+  const r = await fetch(url);
+  if (!r.ok) throw new Error(await r.text());
+  const j = await r.json();
+  if (j.retCode !== 0 && j.retMsg && j.retMsg !== 'OK') throw new Error(j.retMsg || 'API error');
+  return j.result;
+};
+
+// === Symbol search with autosuffix USDT & datalist suggestions ===
+const symInput = $('sym'), symList = $('symList'), btnFind = $('btnFind');
+let SYMBOLS = []; // [{symbol:'BTCUSDT', quote:'USDT', base:'BTC'}]
+let currentSym = 'BTCUSDT';
+let tvWidget = null;
+let agentTimer = null;
+let agentPeriodSec = 5;
+let oiTimer = null;
+let oiUpdatePeriodSec = 10; // обновление ОИ каждые 10 секунд
+
+// load tradable linear USDT symbols
+(async function loadSymbols(){
+  try{
+    const res = await by('/v5/market/instruments-info', {category:'linear'});
+    const list = res.list || [];
+    SYMBOLS = list
+      .filter(s => s.quoteCoin === 'USDT')
+      .map(s => ({symbol:s.symbol, base:s.baseCoin, quote:s.quoteCoin}));
+    // fill datalist
+    symList.innerHTML = SYMBOLS.slice(0,500).map(s => `<option value="${s.symbol}">${s.base}/${s.quote}</option>`).join('');
+  }catch(e){ console.error('symbols', e); }
+})();
+
+function normalizeSymbol(raw){
+  if(!raw) return null;
+  let t = raw.toUpperCase().replace(/[^A-Z0-9]/g,'');
+  if(!t) return null;
+  if(!/USDT$/.test(t)) {
+    const guess = t + 'USDT';
+    if (SYMBOLS.find(s=>s.symbol===guess)) return guess;
+  }
+  if (SYMBOLS.find(s=>s.symbol===t)) return t;
+  const c = SYMBOLS.find(s=>s.base===t || s.symbol.startsWith(t));
+  return c ? c.symbol : t;
+}
+
+function setActiveSeg(segEl, btn){
+  segEl.querySelectorAll('button').forEach(b=>b.classList.toggle('active', b===btn));
+}
+
+// sync everything: agent + chart + OI
+async function selectSymbol(sym){
+  currentSym = sym;
+  $('agentSym').textContent = sym;
+  $('oiTitleSym').textContent = sym;
+  // refresh all modules now
+  spawnAgent();
+  spawnOI(); // запускаем автообновление ОИ
+  mountTV(sym);
+}
+
+btnFind.addEventListener('click', () => {
+  const norm = normalizeSymbol(symInput.value.trim());
+  if(!norm){ alert('Введите тикер'); return; }
+  symInput.value = norm; // autosuffix USDT if needed
+  selectSymbol(norm);
+});
+
+symInput.addEventListener('keydown', (e)=>{
+  if(e.key==='Enter'){ e.preventDefault(); btnFind.click(); }
+});
+
+// === TradingView chart ===
+function tvSymbol(sym){ return `BYBIT:${sym}`; }
+function mountTV(sym){
+  const containerId = 'tvchart';
+  document.getElementById(containerId).innerHTML = ''; // reset
+  tvWidget = new TradingView.widget({
+    symbol: tvSymbol(sym),
+    container_id: containerId,
+    interval: '15',
+    autosize: true,
+    locale: 'ru',
+    theme: 'dark',
+    toolbar_bg: '#0b1020',
+    hide_side_toolbar: false,
+    withdateranges: true,
+    allow_symbol_change: false,
+    studies: [
+      'RSI@tv-basicstudies',
+      'MACD@tv-basicstudies',
+      'MAExp@tv-basicstudies',
+      'MAExp@tv-basicstudies'
+    ]
+  });
+}
+
+// === Agent analytics (price, RSI, EMA, MACD, ATR, simple signal) ===
+const rsi = (closes, period=14) => {
+  let gains=0, losses=0;
+  for(let i=1;i<=period;i++){
+    const ch = closes[i]-closes[i-1];
+    if(ch>0) gains+=ch; else losses-=ch;
+  }
+  let avgGain=gains/period, avgLoss=losses/period;
+  for(let i=period+1;i<closes.length;i++){
+    const ch = closes[i]-closes[i-1];
+    avgGain = (avgGain*(period-1) + Math.max(0,ch))/period;
+    avgLoss = (avgLoss*(period-1) + Math.max(0,-ch))/period;
+  }
+  const rs = avgLoss===0 ? 100 : avgGain/avgLoss;
+  return 100 - 100/(1+rs);
+};
+const ema = (closes, p) => {
+  const k = 2/(p+1);
+  let e = closes[0];
+  for(let i=1;i<closes.length;i++) e = closes[i]*k + e*(1-k);
+  return e;
+};
+const macd = (closes, fast=12, slow=26, signal=9) => {
+  const emaFast = ema(closes, fast);
+  const emaSlow = ema(closes, slow);
+  const line = emaFast - emaSlow;
+  return {line, signal: line*(1-2/(signal+1)), hist: line - (line*(1-2/(signal+1)))};
+};
+const atr = (ohlc, period=14)=>{
+  const trs = ohlc.slice(1).map((o,i)=>{
+    const prev = ohlc[i];
+    return Math.max(
+      o.h - o.l,
+      Math.abs(o.h - prev.c),
+      Math.abs(o.l - prev.c)
+    );
+  });
+  const p = Math.min(period, trs.length);
+  const slice = trs.slice(-p);
+  return slice.reduce((a,b)=>a+b,0)/p;
+};
+
+async function fetchKlines(sym, interval='15', limit=300){
+  const res = await by('/v5/market/kline', {category:'linear', symbol:sym, interval, limit});
+  let rows = (res.list || []).map(r=>({
+    t: +r[0], o:+r[1], h:+r[2], l:+r[3], c:+r[4]
+  })).sort((a,b)=>a.t-b.t);
+  return rows;
+}
+
+// helpers for color logic
+function setClass(el, cls){
+  el.classList.remove('n-red','n-green','n-blue');
+  if(cls) el.classList.add(cls);
+}
+function trendColor(curr, prev){
+  if(prev==null) return '';
+  if(curr>prev) return 'n-green';
+  if(curr<prev) return 'n-red';
+  return '';
+}
+
+// previous values for trend coloring
+const prevVals = {
+  rsi:null, ema50:null, ema200:null, macd:null, atr:null,
+  oi:null, oiDelta:null, funding:null, takerBuy:null, takerSell:null
+};
+
+async function computeIndicators(sym){
+  const rows = await fetchKlines(sym, '15', 300);
+  if(rows.length<60) return {};
+  const closes = rows.map(r=>r.c);
+  const rsi14 = rsi(closes.slice(-(14+60)));
+  const ema50 = ema(closes.slice(-200), 50);
+  const ema200 = ema(closes.slice(-300), 200);
+  const m = macd(closes.slice(-200));
+  const a = atr(rows.map((r,i)=>({h:r.h,l:r.l,c:r.c,prev:r[i-1]?.c})).map((r,i)=>({h:rows[i].h,l:rows[i].l,c:rows[i].c,prevClose:i?rows[i-1].c:rows[i].o})));
+  const last = closes[closes.length-1];
+  const signal = last>ema50 && rsi14>55 ? 'LONG' : (last<ema50 && rsi14<45 ? 'SHORT' : 'FLAT');
+  return {last, rsi14, ema50, ema200, macdLine:m.line, atr:a, signal};
+}
+
+function applyAgentColors(ind){
+  // price is always blue
+  setClass($('lastV'), 'n-blue');
+  // upward/downward metrics
+  setClass($('rsiV'), trendColor(ind.rsi14, prevVals.rsi));
+  setClass($('ema50V'), trendColor(ind.ema50, prevVals.ema50));
+  setClass($('ema200V'), trendColor(ind.ema200, prevVals.ema200));
+  setClass($('macdV'), trendColor(ind.macdLine, prevVals.macd));
+  setClass($('atrV'), trendColor(ind.atr, prevVals.atr));
+  // ticker color by signal
+  if(ind.signal==='LONG'){ setClass($('agentSym'), 'n-green'); $('agentDot').style.background='var(--green)'; setClass($('agentStateTxt'), 'n-green'); }
+  else if(ind.signal==='SHORT'){ setClass($('agentSym'), 'n-red'); $('agentDot').style.background='var(--red)'; setClass($('agentStateTxt'), 'n-red'); }
+  else { setClass($('agentSym'), 'n-blue'); $('agentDot').style.background='var(--blue)'; setClass($('agentStateTxt'), 'n-blue'); }
+  // persist previous
+  prevVals.rsi = ind.rsi14; prevVals.ema50 = ind.ema50; prevVals.ema200 = ind.ema200;
+  prevVals.macd = ind.macdLine; prevVals.atr = ind.atr;
+}
+
+async function spawnAgent(){
+  clearInterval(agentTimer);
+  $('autoLbl').textContent = agentPeriodSec+'s';
+  const run = async () => {
+    try{
+      const ind = await computeIndicators(currentSym);
+      if(!ind.last){ return; }
+      $('lastV').textContent = fmt(ind.last);
+      $('rsiV').textContent = fmt(ind.rsi14,2);
+      $('ema50V').textContent = fmt(ind.ema50,2);
+      $('ema200V').textContent = fmt(ind.ema200,2);
+      $('macdV').textContent = fmt(ind.macdLine,4);
+      $('atrV').textContent = fmt(ind.atr,4);
+      $('sidePill').textContent = ind.signal;
+      $('agentStateTxt').textContent = ind.signal==='LONG'?'LONG':(ind.signal==='SHORT'?'SHORT':'FLAT');
+      // Entry/TP/SL
+      const tp = ind.signal==='LONG'? ind.last + ind.atr*1.2 : ind.signal==='SHORT' ? ind.last - ind.atr*1.2 : null;
+      const sl = ind.signal==='LONG'? ind.last - ind.atr*0.8 : ind.signal==='SHORT' ? ind.last + ind.atr*0.8 : null;
+      $('entryV').textContent = ind.signal==='FLAT' ? '—' : fmt(ind.last);
+      $('tpV').textContent = ind.signal==='FLAT' ? '—' : fmt(tp,2);
+      $('slV').textContent = ind.signal==='FLAT' ? '—' : fmt(sl,2);
+      $('rrV').textContent = ind.signal==='FLAT' ? '—' : (1.2/0.8).toFixed(2);
+      $('confV').textContent = ind.signal==='FLAT' ? '—' : (Math.min(99, Math.max(30, Math.abs(ind.rsi14-50)*2))).toFixed(0)+'%';
+      $('wsState').textContent = 'online '+nowStr();
+      applyAgentColors(ind);
+    }catch(e){
+      console.error('agent', e);
+      $('wsState').textContent = 'error';
+    }
+  };
+  await run();
+  agentTimer = setInterval(run, agentPeriodSec*1000);
+}
+
+// Auto timing buttons
+document.querySelectorAll('#autoSeg button').forEach(btn=>{
+  btn.addEventListener('click',()=>{
+    agentPeriodSec = +btn.dataset.sec;
+    setActiveSeg(document.getElementById('autoSeg'), btn);
+    spawnAgent();
+  });
+});
+
+// === OI block (real data + taker volume) - АВТООБНОВЛЕНИЕ В РЕАЛЬНОМ ВРЕМЕНИ ===
+let oiInterval = '5min';
+
+async function refreshOI(){
+  try{
+    // Получаем Open Interest
+    const oi = await by('/v5/market/open-interest', {category:'linear', symbol: currentSym, intervalTime: oiInterval, limit: 2});
+    const list = (oi.list||[]).sort((a,b)=>+a.timestamp - +b.timestamp);
+    const last = list[list.length-1];
+    const prev = list[list.length-2] || last;
+    const oiNow = +last.openInterest;
+    const oiPrev = +prev.openInterest;
+    const oiDeltaVal = oiNow - oiPrev;
+    const oiDeltaPctVal = oiPrev !== 0 ? ((oiDeltaVal / oiPrev) * 100) : 0;
+    
+    $('oiNow').textContent = fmt(oiNow,0);
+    $('oiDelta').textContent = fmt(oiDeltaVal,0);
+    $('oiDeltaPct').textContent = fmt(oiDeltaPctVal,2) + '%';
+    
+    // Цветовая индикация для OI
+    setClass($('oiNow'), trendColor(oiNow, prevVals.oi));
+    setClass($('oiDelta'), oiDeltaVal >= 0 ? 'n-green' : 'n-red');
+    setClass($('oiDeltaPct'), oiDeltaPctVal >= 0 ? 'n-green' : 'n-red');
+    prevVals.oi = oiNow;
+
+    // Получаем Taker Volume
+    const tv = await by('/v5/market/tickers', {category:'linear', symbol: currentSym});
+    if (tv.list && tv.list[0]){
+      const tickerData = tv.list[0];
+      const b = +tickerData.turnover24h * (+tickerData.volume24h > 0 ? 0.5 : 0); // примерная оценка
+      const s = +tickerData.turnover24h * (+tickerData.volume24h > 0 ? 0.5 : 0);
+      
+      // Более точный способ - через отдельный эндпоинт
+      try {
+        const takerVol = await by('/v5/market/recent-trade', {category:'linear', symbol: currentSym, limit: 50});
+        if(takerVol.list && takerVol.list.length > 0) {
+          let buyVol = 0, sellVol = 0;
+          takerVol.list.forEach(trade => {
+            const vol = +trade.size * +trade.price;
+            if(trade.side === 'Buy') buyVol += vol;
+            else sellVol += vol;
+          });
+          $('takerBuy').textContent = fmt(buyVol,0);
+          $('takerSell').textContent = fmt(sellVol,0);
+          setClass($('takerBuy'), trendColor(buyVol, prevVals.takerBuy));
+          setClass($('takerSell'), trendColor(sellVol, prevVals.takerSell));
+          prevVals.takerBuy = buyVol; 
+          prevVals.takerSell = sellVol;
+        }
+      } catch(e) {
+        console.warn('taker volume fallback', e);
+        $('takerBuy').textContent = '—';
+        $('takerSell').textContent = '—';
+      }
+    }
+
+    // Получаем Funding Rate
+    const tick = await by('/v5/market/tickers', {category:'linear', symbol: currentSym});
+    const fr = tick.list && tick.list[0] ? +tick.list[0].fundingRate : null;
+    $('fundingNow').textContent = fr!=null ? (fr*100).toFixed(4) + '%' : '—';
+    setClass($('fundingNow'), fr>0 ? 'n-green' : (fr<0 ? 'n-red' : ''));
+    prevVals.funding = fr;
+
+    $('oiHint').textContent = oiInterval + ' • ' + nowStr();
+    $('oiUpdated').textContent = 'Обновлено: ' + nowStr();
+  }catch(e){
+    console.error('oi', e);
+    $('oiUpdated').textContent = 'Ошибка обновления: ' + e.message;
+  }
+}
+
+// Функция для запуска автообновления ОИ
+function spawnOI(){
+  clearInterval(oiTimer);
+  const run = async () => {
+    await refreshOI();
+  };
+  run(); // первый запуск сразу
+  oiTimer = setInterval(run, oiUpdatePeriodSec * 1000); // автообновление каждые 10 секунд
+}
+
+// Кнопки переключения таймфреймов ОИ
+document.querySelectorAll('#oiSeg button').forEach(btn=>{
+  btn.addEventListener('click',()=>{
+    oiInterval = btn.dataset.int;
+    setActiveSeg(document.getElementById('oiSeg'), btn);
+    refreshOI(); // обновляем сразу при смене таймфрейма
+  });
+});
+
+// === Drawer for placeholder buttons ===
+const drawer = document.getElementById('drawer');
+const drawerTitle = document.getElementById('drawerTitle');
+const drawerBody = document.getElementById('drawerBody');
+document.querySelectorAll('.neon-wrap .btn, .btn-group-top .btn').forEach(btn=>{
+  btn.addEventListener('click', ()=>{
+    drawerTitle.textContent = btn.textContent.trim();
+    drawerBody.innerHTML = `<p class="mini">Модуль «${btn.textContent.trim()}» в разработке.</p>`;
+    drawer.classList.add('show');
+    // Автоскролл к модалке
+    setTimeout(() => {
+      document.getElementById('chartWrap').scrollIntoView({ behavior: 'smooth', block: 'center' });
+    }, 100);
+  });
+});
+document.getElementById('drawerClose').addEventListener('click', ()=>drawer.classList.remove('show'));
+
+// === Bootstrap ===
+mountTV(currentSym);
+spawnAgent();
+spawnOI(); // запускаем автообновление ОИ при загрузке
+</script>
+</body>
+</html>
+
