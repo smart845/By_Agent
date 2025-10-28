@@ -1,0 +1,283 @@
+<!DOCTYPE html>
+<html lang="ru">
+<head>
+  <meta charset="utf-8"/>
+  <meta name="viewport" content="width=device-width, initial-scale=1, maximum-scale=1, viewport-fit=cover"/>
+  <meta name="theme-color" content="#000000"/>
+  <title>ByAgent Terminal</title>
+  <script src="https://telegram.org/js/telegram-web-app.js">
+// --- Автоскролл к модалке и возврат ---
+let prevScrollY = 0;
+const openDrawerOriginal = openDrawer;
+openDrawer = function(title, html, onOpen) {
+  prevScrollY = window.scrollY;
+  openDrawerOriginal(title, html, onOpen);
+  setTimeout(()=>document.getElementById('drawer').scrollIntoView({behavior:'smooth',block:'center'}),100);
+};
+document.getElementById('drawerClose').addEventListener('click',()=>{
+  window.scrollTo({top: prevScrollY, behavior:'smooth'});
+});
+
+</script>
+  <script src="https://s3.tradingview.com/tv.js">
+// --- Автоскролл к модалке и возврат ---
+let prevScrollY = 0;
+const openDrawerOriginal = openDrawer;
+openDrawer = function(title, html, onOpen) {
+  prevScrollY = window.scrollY;
+  openDrawerOriginal(title, html, onOpen);
+  setTimeout(()=>document.getElementById('drawer').scrollIntoView({behavior:'smooth',block:'center'}),100);
+};
+document.getElementById('drawerClose').addEventListener('click',()=>{
+  window.scrollTo({top: prevScrollY, behavior:'smooth'});
+});
+
+</script>
+  <style>
+:root{--bg0:#000;--bg1:#0a0a0a;--card:#1a1a1a;--text:#e0e0e0;--border:#404040;--green:#22c55e;--red:#ef4444;--blue:#38bdf8;--amber:#f59e0b;--silver:#c0c0c0}
+*{box-sizing:border-box}body{margin:0;color:var(--text);background:linear-gradient(180deg,#0b0b0b,#000);font-family:ui-sans-serif,system-ui,-apple-system,Segoe UI,Roboto,Arial;scroll-behavior:smooth}
+.wrap{max-width:1220px;margin:8px auto;padding:0 12px 28px}.card{background:linear-gradient(135deg,rgba(64,64,64,.15),rgba(32,32,32,.1));border:1px solid var(--border);border-radius:16px;padding:10px}
+.row{display:flex;gap:8px;flex-wrap:wrap;align-items:center}.spacer{flex:1 1 auto}.input{flex:1 1 260px;background:#0a0a0a;border:1px solid var(--border);color:#e0e0e0;border-radius:12px;padding:12px}
+.btn{background:linear-gradient(90deg,#0a0a0a,#2a2a2a,#0a0a0a);background-size:300% 100%;color:#e0e0e0;border:2px solid rgba(192,192,192,.5);border-radius:14px;padding:11px 12px;cursor:pointer}
+.seg{display:flex;gap:6px;padding:4px;border-radius:12px;background:#0a0a0a;border:1px solid var(--border)}.seg button{background:linear-gradient(90deg,transparent,rgba(64,64,64,.15),transparent);color:#c0c0c0;border:2px solid rgba(192,192,192,.3);padding:6px 10px;border-radius:10px;cursor:pointer}.seg button.active{color:#fff;border-color:rgba(192,192,192,.7)}
+.badge{border:1px solid var(--border);background:#0a0a0a;border-radius:12px;padding:6px 10px;color:#c0c0c0}.mini{font-size:12px;color:#a0a0a0}.mono{font-family:ui-monospace,Menlo,Consolas,monospace}
+.pills{display:flex;flex-wrap:wrap;gap:8px;margin-top:8px}.pill{border:1px solid var(--border);border-radius:12px;padding:6px 10px;background:#0a0a0a;color:#c0c0c0}
+.agentHead{display:flex;align-items:center;gap:8px}.dot{width:10px;height:10px;border-radius:50%;display:inline-block;background:var(--blue)}.h1{font-weight:800}.sym{font-weight:800}
+.ul-stat{list-style:none;padding-left:0;margin:10px 0 4px 0}.ul-stat li{display:flex;gap:8px;margin:6px 0}.ul-stat .label{min-width:62px;opacity:.85}
+#chartWrap{height:560px;border:1px solid var(--border);border-radius:14px;overflow:hidden;background:#000;position:relative;margin-top:8px}#tvchart{height:100%}
+.n-blue{color:var(--blue)}.n-green{color:var(--green)}.n-red{color:var(--red)}.n-amber{color:var(--amber)}
+.drawer{position:absolute;inset:0;background:rgba(10,10,10,.96);border-radius:14px;display:none;flex-direction:column;z-index:10;opacity:0;transform:translateY(40px);transition:.3s;border:1px solid var(--border)}
+.drawer.show{display:flex;opacity:1;transform:translateY(0)}.drawer .head{display:flex;align-items:center;justify-content:space-between;padding:12px 16px;border-bottom:1px solid var(--border)}.drawerBody{padding:16px;overflow:auto;height:100%}
+.table{width:100%;border-collapse:collapse;margin-top:8px}.table th,.table td{border-bottom:1px dashed rgba(64,64,64,.6); border-right:1px solid rgba(64,64,64,.3);padding:6px 4px;text-align:left}.table th{position:sticky;top:0;background:rgba(0,0,0,.5)}
+.table th:last-child,.table td:last-child{border-right:none}
+.action{cursor:pointer;margin-left:8px;opacity:.9}.action:hover{opacity:1;transform:translateY(-1px)}[data-sym]{cursor:pointer}[data-sym]:hover{text-shadow:0 0 8px rgba(56,189,248,.4);color:#fff}
+.loader{display:inline-flex;gap:8px;color:#c0c0c0}.loader .spin{width:14px;height:14px;border:2px solid rgba(255,255,255,.25);border-top-color:#fff;border-radius:50%;animation:spin 1s linear infinite}@keyframes spin{to{transform:rotate(360deg)}}
+#lastPill{display:none}
+  </style>
+</head>
+<body>
+<div class="wrap">
+
+  <div class="card">
+    <div class="row">
+      <input id="sym" class="input mono" list="symList" placeholder="Поиск: BTC (авто → BTCUSDT) / BTCUSDT" spellcheck="false"/>
+      <datalist id="symList"></datalist>
+      <button class="btn" id="btnFind">Найти</button>
+    </div>
+
+    <div class="btn-group-top" style="display:flex;gap:8px;margin-top:8px">
+      <button class="btn">Wallet</button>
+      <button class="btn" id="btnAlerts">Алерты</button>
+    </div>
+
+    <div class="neon-wrap" style="display:grid;grid-template-columns:1fr 1fr;gap:8px;margin-top:8px">
+      <button class="btn">Копитрейдинг</button>
+      <button class="btn">Спреды</button>
+      <button class="btn">DeFi</button>
+      <button class="btn">Сигналы 10x</button>
+      <button class="btn">⭐ Избранное</button>
+      <button class="btn">Доходность App</button>
+      <button class="btn">Сетапы</button>
+      <button class="btn">Аномалии</button>
+      <button class="btn">Топ рост/падение</button>
+      <button class="btn">Листинги</button>
+    </div>
+  </div>
+
+  <div class="card" style="margin-top:10px">
+    <div class="row">
+      <div class="agentHead">
+        <span id="agentDot" class="dot"></span>
+        <span id="agentStateTxt" class="h1 mono n-blue">FLAT</span>
+      </div>
+      <div class="spacer"></div>
+      <div class="seg" id="autoSeg">
+        <button class="active" data-sec="5">5s</button>
+        <button data-sec="10">10s</button>
+        <button data-sec="15">15s</button>
+      </div>
+    </div>
+
+    <div style="margin-top:6px"><div id="agentSym" class="mono sym n-blue">BTCUSDT</div></div>
+
+    <ul class="ul-stat">
+      <li><span class="label mono">Entry:</span><span id="entryV" class="mono n-blue">—</span></li>
+      <li><span class="label mono">SL:</span><span id="slV" class="mono n-red">—</span></li>
+    </ul>
+
+    <ul class="ul-stat" id="tpLadder" style="margin-top:0">
+      <li><span class="label mono">TP1:</span><span id="tp1V" class="mono n-green">—</span></li>
+      <li><span class="label mono">TP2:</span><span id="tp2V" class="mono n-green">—</span></li>
+      <li><span class="label mono">TP3:</span><span id="tp3V" class="mono n-green">—</span></li>
+    </ul>
+
+    <div class="pills">
+      <div class="pill"><span class="k mono">Сигнал:</span><span id="sidePill" class="mono">—</span></div>
+      <div class="pill"><span class="k mono">Auto:</span><span id="autoLbl" class="mono">5s</span></div>
+      <div class="pill"><span class="k mono">RSI14:</span><span id="rsiV" class="mono">—</span></div>
+      <div class="pill"><span class="k mono">EMA50:</span><span id="ema50V" class="mono">—</span></div>
+      <div class="pill"><span class="k mono">EMA200:</span><span id="ema200V" class="mono">—</span></div>
+      <div class="pill"><span class="k mono">MACD:</span><span id="macdV" class="mono">—</span></div>
+      <div class="pill"><span class="k mono">ATR:</span><span id="atrV" class="mono">—</span></div>
+      <div class="pill"><span class="k mono">RR:</span><span id="rrV" class="mono">—</span></div>
+      <div class="pill"><span class="k mono">Conf:</span><span id="confV" class="mono">—</span></div>
+      <div class="pill"><span class="k mono">WS:</span><span id="wsState" class="mono">offline</span></div>
+    </div>
+
+    <div class="mini mono" id="aiLine" style="margin-top:8px;opacity:.95">🧠 Прогноз: —</div>
+
+    <div id="chartWrap">
+      <div id="tvchart"></div>
+      <div class="drawer" id="drawer">
+        <div class="head">
+          <div class="title" id="drawerTitle">—</div>
+          <button class="btn" id="drawerClose" style="background:none;border:2px solid var(--border);color:var(--silver);padding:8px 12px;border-radius:10px">Закрыть</button>
+        </div>
+        <div class="drawerBody" id="drawerBody"></div>
+      </div>
+    </div>
+  </div>
+
+  <div class="card" id="oiCard" style="margin-top:10px">
+    <div class="row" style="justify-content:space-between;align-items:center">
+      <div class="heading" id="oiHeader">
+        Open Interest — <span id="oiTitleSym">BTCUSDT</span>
+        <span id="oiHint" class="mini mono n-blue" style="margin-left:8px">—</span>
+      </div>
+      <div class="seg" id="oiSeg">
+        <button class="active" data-int="5m">5m</button>
+        <button data-int="15m">15m</button>
+        <button data-int="30m">30m</button>
+        <button data-int="1h">1h</button>
+        <button data-int="4h">4h</button>
+      </div>
+    </div>
+    <div class="mini">Taker Buy: <span class="mono n-green" id="takerBuy">—</span></div>
+    <div class="mini">Taker Sell: <span class="mono n-red" id="takerSell">—</span></div>
+    <div class="mini">Open Interest: <span class="mono" id="oiNow">—</span></div>
+    <div class="mini">ΔOI: <span class="mono" id="oiDelta">—</span></div>
+    <div class="mini">ΔOI %: <span class="mono" id="oiDeltaPct">—</span></div>
+    <div class="mini">Funding Rate: <span class="mono" id="fundingNow">—</span></div>
+    <div class="mini muted" id="oiUpdated">Обновлено: —</div>
+  </div>
+</div>
+
+<script>
+const API="https://fapi.binance.com";const WS_PUBLIC="wss://fstream.binance.com/ws";const $=id=>document.getElementById(id);
+const fmt=(n,d=4)=> (n==null||Number.isNaN(+n)?'—':(+n).toLocaleString('ru-RU',{maximumFractionDigits:d}));const nowStr=()=>new Date().toLocaleTimeString('ru-RU');
+const by=async(p,params={})=>{const u=new URL(API+p);Object.entries(params).forEach(([k,v])=>u.searchParams.set(k,v));const r=await fetch(u);if(!r.ok)throw new Error(await r.text());return r.json()}
+
+const symInput=$('sym'), symList=$('symList'), btnFind=$('btnFind');let SYMBOLS=[], currentSym='BTCUSDT', tvWidget=null, agentTimer=null, agentPeriodSec=5, oiTimer=null, oiUpdatePeriodSec=10;
+
+(async()=>{try{const info=await by('/fapi/v1/exchangeInfo');SYMBOLS=info.symbols.filter(s=>s.contractType==='PERPETUAL'&&s.quoteAsset==='USDT'&&s.status==='TRADING').map(s=>({symbol:s.symbol,base:s.baseAsset}));symList.innerHTML=SYMBOLS.slice(0,800).map(s=>`<option value="${s.symbol}">${s.base}/USDT</option>`).join('')}catch(e){console.error(e)}})();
+const normalizeSymbol=(raw)=>{if(!raw)return null;let t=raw.toUpperCase().replace(/[^A-Z0-9]/g,'');if(!/USDT$/.test(t)) {const g=t+'USDT';if(SYMBOLS.find(s=>s.symbol===g)) return g;} if(SYMBOLS.find(s=>s.symbol===t)) return t;const c=SYMBOLS.find(s=>s.base===t||s.symbol.startsWith(t));return c?c.symbol:t;};
+
+function setActiveSeg(segEl, btn){segEl.querySelectorAll('button').forEach(b=>b.classList.toggle('active',b===btn))}
+function tvSymbol(sym){return `BINANCE:${sym}.P`}
+function mountTV(sym){const id='tvchart';document.getElementById(id).innerHTML='';tvWidget=new TradingView.widget({symbol:tvSymbol(sym),container_id:id,interval:'15',autosize:true,locale:'ru',theme:'dark',hide_side_toolbar:false,withdateranges:true,allow_symbol_change:false,studies:['RSI@tv-basicstudies','MACD@tv-basicstudies','MAExp@tv-basicstudies','MAExp@tv-basicstudies']});}
+
+let ws=null, wsReconnectTimer=null;function wsCleanup(){try{ws&&ws.close()}catch(_){}}function connectWS(){wsCleanup();const stream=currentSym.toLowerCase()+'@miniTicker';ws=new WebSocket(`${WS_PUBLIC}/${stream}`);ws.onopen=()=>{$('wsState').textContent='ws online '+nowStr()};ws.onclose=()=>{$('wsState').textContent='ws closed';wsReconnectTimer=setTimeout(connectWS,3000)};ws.onerror=()=>{$('wsState').textContent='ws error'};ws.onmessage=()=>{}}
+
+// Indicators
+const rsi=(c,p=14)=>{if(c.length<=p)return NaN;let g=0,l=0;for(let i=1;i<=p;i++){const ch=c[i]-c[i-1];if(ch>0)g+=ch;else l-=ch}let ag=g/p, al=l/p;for(let i=p+1;i<c.length;i++){const ch=c[i]-c[i-1];ag=(ag*(p-1)+Math.max(0,ch))/p;al=(al*(p-1)+Math.max(0,-ch))/p}const rs=al===0?1000:ag/al;return 100-100/(1+rs)}
+const ema=(c,p)=>{const k=2/(p+1);let e=c[0];for(let i=1;i<c.length;i++) e=c[i]*k+e*(1-k);return e}
+const macd=(c,fa=12,sl=26,sg=9)=>{const f=ema(c,fa), s=ema(c,sl), line=f-s, signal=line*(1-2/(sg+1)); return {line, signal, hist: line-signal}}
+const atr=(rows,p=14)=>{if(rows.length<p+1)return NaN;const trs=rows.slice(1).map((o,i)=>{const pr=rows[i];return Math.max(o.h-o.l,Math.abs(o.h-pr.c),Math.abs(o.l-pr.c))});const win=trs.slice(-Math.min(p,trs.length));return win.reduce((a,b)=>a+b,0)/win.length}
+
+async function kl(sym,interval='15m',limit=300){const r=await by('/fapi/v1/klines',{symbol:sym,interval,limit});return r.map(a=>({t:+a[0],o:+a[1],h:+a[2],l:+a[3],c:+a[4],v:+a[5]}))}
+
+// Robust compute with proper SL/TP
+async function compute(sym){
+  const rows=await kl(sym,'15m',300);
+  if(rows.length<60) return {};
+  const closes=rows.map(r=>r.c), vols=rows.map(r=>r.v);
+  const last=closes.at(-1);
+  const A=atr(rows);
+  const atrSafe = (A && A>0) ? A : Math.max( (rows.at(-1).h - rows.at(-1).l),  (rows.at(-2).h - rows.at(-2).l) || 0.0001 );
+  const rsi14=rsi(closes.slice(-120));
+  const ema50=ema(closes.slice(-200),50), ema200=ema(closes.slice(-300),200);
+  const m=macd(closes.slice(-200));
+  const volAvg=vols.slice(-50).reduce((x,y)=>x+y,0)/50, volNow=vols.at(-1);
+  const volUp = volNow>volAvg*1.3;
+  // scoring
+  let score=0;
+  if(last>ema50)score+=1; if(ema50>ema200)score+=1;
+  if(m.line>0)score+=1; if(rsi14>55)score+=1; if(volUp)score+=0.5;
+  if(last<ema50)score-=1; if(ema50<ema200)score-=1;
+  if(m.line<0)score-=1; if(rsi14<45)score-=1;
+  let signal='FLAT';
+  if(score>=2) signal='LONG';
+  if(score<=-2) signal='SHORT';
+  // targets
+  const dir = signal==='LONG'?1: signal==='SHORT'?-1: 0;
+  const sl = dir? (last - dir*atrSafe*1.0) : null;
+  const tp1 = dir? (last + dir*atrSafe*1.0) : null;
+  const tp2 = dir? (last + dir*atrSafe*1.5) : null;
+  const tp3 = dir? (last + dir*atrSafe*2.0) : null;
+  // confidence
+  const conf = signal==='FLAT' ? 0 : Math.max(55, Math.min(92, 60 + Math.abs(score)*10 + (volUp?5:0)));
+  const reason = signal==='LONG'
+    ? `EMA50>EMA200, RSI=${rsi14.toFixed(1)}, MACD>0, объём ${volUp?'↑':'норма'}`
+    : signal==='SHORT'
+      ? `EMA50<EMA200, RSI=${rsi14.toFixed(1)}, MACD<0, объём ${volUp?'↑':'норма'}`
+      : `Нейтрально — условий мало`;
+  const note = signal==='FLAT' ? '🧠 Прогноз: FLAT — ждём импульс' : `🧠 Прогноз: ${signal} (${conf.toFixed(0)}%) — ${reason}`;
+  return {last, rsi14, ema50, ema200, macd:m.line, atr:atrSafe, signal, score, sl, tp1, tp2, tp3, conf, note};
+}
+
+async function spawnAgent(){clearInterval(agentTimer);$('autoLbl').textContent=agentPeriodSec+'s';const run=async()=>{try{const ind=await compute(currentSym);if(!ind.last)return;$('rsiV').textContent=fmt(ind.rsi14,2);$('ema50V').textContent=fmt(ind.ema50,2);$('ema200V').textContent=fmt(ind.ema200,2);$('macdV').textContent=fmt(ind.macd,4);$('atrV').textContent=fmt(ind.atr,4);$('sidePill').textContent=(ind.signal==='LONG'?'🟢 LONG':ind.signal==='SHORT'?'🔴 SHORT':'🔵 FLAT');$('agentStateTxt').textContent=ind.signal;$('entryV').textContent=ind.signal==='FLAT'?'—':fmt(ind.last);$('slV').textContent=ind.signal==='FLAT'?'—':fmt(ind.sl,2);$('tp1V').textContent=ind.signal==='FLAT'?'—':fmt(ind.tp1,2);$('tp2V').textContent=ind.signal==='FLAT'?'—':fmt(ind.tp2,2);$('tp3V').textContent=ind.signal==='FLAT'?'—':fmt(ind.tp3,2);$('rrV').textContent=ind.signal==='FLAT'?'—':( (Math.abs(ind.tp2-ind.last)/Math.abs(ind.last - ind.sl)) ).toFixed(2) ;$('confV').textContent=ind.signal==='FLAT'?'—':ind.conf.toFixed(0)+'%';$('wsState').textContent='online '+nowStr();if(ind.signal==='LONG'){$('agentDot').style.background='var(--green)';$('agentSym').className='mono sym n-green';$('agentStateTxt').className='h1 mono n-green'}else if(ind.signal==='SHORT'){$('agentDot').style.background='var(--red)';$('agentSym').className='mono sym n-red';$('agentStateTxt').className='h1 mono n-red'}else{$('agentDot').style.background='var(--blue)';$('agentSym').className='mono sym n-blue';$('agentStateTxt').className='h1 mono n-blue'}$('aiLine').textContent=ind.note}catch(e){console.error('agent',e);$('wsState').textContent='error'}};await run();agentTimer=setInterval(run,agentPeriodSec*1000)}
+
+document.querySelectorAll('#autoSeg button').forEach(b=>b.addEventListener('click',()=>{agentPeriodSec=+b.dataset.sec;setActiveSeg(document.getElementById('autoSeg'),b);spawnAgent()}));
+
+let oiInterval='5m';async function refreshOI(){try{const u=new URL('https://fapi.binance.com/futures/data/openInterestHist');u.searchParams.set('symbol',currentSym);u.searchParams.set('period',oiInterval);u.searchParams.set('limit','2');const hist=await fetch(u).then(r=>r.json());const last=hist.at(-1), prev=hist.at(-2)||last;const oiNow=+last.sumOpenInterestValue, oiPrev=+prev.sumOpenInterestValue;const d=oiNow-oiPrev, dp=oiPrev?(d/oiPrev)*100:0;$('oiNow').textContent=fmt(oiNow,0);$('oiDelta').textContent=fmt(d,0);$('oiDeltaPct').textContent=fmt(dp,2)+'%';const tr=await by('/fapi/v1/trades',{symbol:currentSym,limit:1000});let buy=0,sell=0;tr.forEach(t=>{const val=+t.qty*+t.price; if(t.isBuyerMaker) sell+=val; else buy+=val;});$('takerBuy').textContent=fmt(buy,0);$('takerSell').textContent=fmt(sell,0);const prem=await by('/fapi/v1/premiumIndex',{symbol:currentSym});$('fundingNow').textContent=(+prem.lastFundingRate*100).toFixed(4)+'%';$('oiHint').textContent=oiInterval+' • '+nowStr();$('oiUpdated').textContent='Обновлено: '+nowStr()}catch(e){console.error('oi',e);$('oiUpdated').textContent='Ошибка: '+e.message}}function spawnOI(){clearInterval(oiTimer);const run=async()=>refreshOI();run();oiTimer=setInterval(run,oiUpdatePeriodSec*1000)}document.querySelectorAll('#oiSeg button').forEach(b=>b.addEventListener('click',()=>{oiInterval=b.dataset.int;setActiveSeg(document.getElementById('oiSeg'),b);refreshOI()}));
+
+async function selectSymbol(sym){currentSym=sym;$('agentSym').textContent=sym;$('oiTitleSym').textContent=sym;spawnAgent();spawnOI();mountTV(sym);connectWS()}
+btnFind.addEventListener('click',()=>{const n=normalizeSymbol(symInput.value.trim());if(!n){alert('Введите тикер');return}symInput.value=n;selectSymbol(n)});symInput.addEventListener('keydown',e=>{if(e.key==='Enter'){e.preventDefault();btnFind.click()}});
+
+const drawer=$('drawer'), drawerTitle=$('drawerTitle'), drawerBody=$('drawerBody');const loaderHTML=(t='Загрузка')=>`<div class="loader"><span class="spin"></span><span>${t}…</span></div>`;function openDrawer(t,html,onOpen){drawerTitle.textContent=t;drawerBody.innerHTML=html;drawer.classList.add('show');if(onOpen)setTimeout(onOpen,0)}$('drawerClose').addEventListener('click',()=>drawer.classList.remove('show'));
+
+function actionBtns(sym){return `<span class="action" title="В график" data-act="open" data-sym="${sym}">📈</span><span class="action" title="В избранное" data-act="fav" data-sym="${sym}">⭐</span><span class="action" title="Алерт" data-act="alert" data-sym="${sym}">🔔</span><span class="action" title="Удалить из избранного" data-act="unfav" data-sym="${sym}">🗑️</span>`}
+function bindRowActions(c){c.addEventListener('click',e=>{const t=e.target.closest('.action,[data-sym]');if(!t)return;const sym=t.dataset.sym;if(!sym)return;const act=t.classList.contains('action')?t.dataset.act:'open';if(act==='open'){selectSymbol(sym);drawer.classList.remove('show')}if(act==='fav'){const s=JSON.parse(localStorage.getItem('fav')||'[]');if(!s.includes(sym)){localStorage.setItem('fav',JSON.stringify([sym,...s]));alert('Добавлено в избранное: '+sym)}}if(act==='unfav'){const s=JSON.parse(localStorage.getItem('fav')||'[]').filter(x=>x!==sym);localStorage.setItem('fav',JSON.stringify(s));const favBody=document.getElementById('favBody');if(favBody && c.contains(favBody)) renderFavorites();}if(act==='alert'){localStorage.setItem('alert_prefill',sym);openAlerts();}})}
+
+function walletHTML(){return `<div style="display:flex;align-items:center;gap:8px"><span style="font-size:20px">👛</span><span class="h1">Wallet</span></div><div class="mini mono" style="margin-top:6px">Wallet / Подписка (TON)</div><div class="card" style="margin-top:10px;padding:14px"><div style="display:flex;justify-content:space-between;align-items:center"><div style="font-weight:800;font-size:18px">Wallet / Подписка</div><div class="mono n-red">Не активна</div></div><div class="row" style="gap:8px;margin-top:10px"><button class="btn" id="btnTonConnect">Подключить TON Wallet</button><span class="badge mono">Адрес: <span id="tonAddr">—</span></span><span class="badge mono">Баланс: <span id="tonBal">—</span></span></div><div style="margin-top:16px;font-weight:700">Подписка ByAgent — доступ на 30 дней</div><div class="mini" style="margin-top:4px">Стоимость: 2 TON <span class="gray">(демо-оплата)</span></div><div class="row" style="gap:14px;margin-top:12px"><label class="mini"><input type="checkbox" id="tonTerms"/> Я принимаю условия использования</label><label class="mini"><input type="checkbox" id="tonPrivacy"/> Согласен с политикой конфиденциальности</label></div><div class="row" style="gap:8px;margin-top:10px"><button class="btn" id="btnTonPay" disabled>Продлить подписку за 2 TON</button></div><div class="mini gray" style="margin-top:8px">Подключите кошелёк и отметьте оба чекбокса</div></div>`}function openWallet(){openDrawer('Wallet',walletHTML(),()=>{const t=drawer.querySelector('#tonTerms'),p=drawer.querySelector('#tonPrivacy'),pay=drawer.querySelector('#btnTonPay');function upd(){pay.disabled=!(t.checked&&p.checked)}t.addEventListener('change',upd);p.addEventListener('change',upd);upd()})}
+
+function alertsModalHTML(){return `<div>Алерты</div><div class="row" style="margin-top:10px;align-items:center"><span style="font-size:20px">⚠️</span><div class="mini mono" style="flex:1 1 auto">Чтобы получать уведомления, запусти бота <a href="https://t.me/By_agent_bot" target="_blank" style="color:var(--silver)">@By_agent_bot</a> и нажми Start.</div><a class="btn" href="https://t.me/By_agent_bot" target="_blank" style="flex:0 1 auto">Открыть бота</a></div><h3 style="margin:20px 0 8px 0;color:var(--text);display:flex;justify-content:space-between;align-items:center"><span>Ценовые алерты</span><span class="mini mono">Уведомления в Telegram</span></h3><div id="liveTickerDisplay" class="card" style="margin-bottom:10px;padding:10px;display:none;align-items:center;justify-content:space-between"><span id="liveTickerSymbol" class="mono sym n-blue" style="font-size:1.2em">—</span><span id="liveTickerPrice" class="mono n-green" style="font-size:1.2em">—</span></div><div class="row" style="gap:8px;margin-bottom:8px"><input id="alertSym" class="input" placeholder="Тикер (напр. BTC)" style="flex:1 1 180px"/><button id="alertFind" class="btn" style="flex:0 1 auto;padding:11px 16px">Найти</button></div><div class="row" style="gap:8px"><input id="alertPrice" class="input" placeholder="Целевая цена" style="flex:1 1 180px"/><button id="alertCreate" class="btn" style="flex:0 1 auto;padding:11px 16px">Создать алерт</button></div><div class="mini mono" style="margin-top:8px;color:#888">Алерты сохраняются локально и будут активны при открытом приложении.</div><h3 style="margin:20px 0 8px 0;color:var(--text)">Активные алерты</h3><div id="activeAlertsList" style="border:1px solid var(--border);border-radius:12px;padding:10px;background:rgba(0,0,0,.15);max-height:200px;overflow-y:auto"><div class="mini mono" style="color:#888">Список алертов пуст.</div></div>`}
+const alertEngine={list:JSON.parse(localStorage.getItem('alerts')||'[]'),save(){localStorage.setItem('alerts',JSON.stringify(this.list))},add(it){this.list.unshift(it);this.save()},del(i){this.list.splice(i,1);this.save()},checkTick(sym,price){this.list.forEach(a=>{if(a.sym===sym){if((a.op==='>'&&price>=a.price)||(a.op==='<'&&price<=a.price)){try{new Audio('data:audio/wav;base64,UklGRiQAAABXQVZFZm10IBAAAAABAAEAESsAACJWAAACABAAZGF0YQAAAAA=').play()}catch(_){}a.fired=true;this.save()}}})}}
+
+function favoritesHTML(){return `<div style="display:flex;align-items:center;gap:8px"><span style="font-size:20px">⭐</span> Избранное</div><div class="mini" style="margin-top:6px">Клик по тикеру — открыть на графике. Удаление — значок корзины.</div><table class="table"><thead><tr><th>Тикер</th><th>Действия</th></tr></thead><tbody id="favBody"></tbody></table>`}
+function renderFavorites(){const b=$('favBody');const arr=JSON.parse(localStorage.getItem('fav')||'[]');b.innerHTML=arr.length?arr.map(s=>`<tr><td class="mono" data-sym="${s}">${s}</td><td>${actionBtns(s)}</td></tr>`).join(''):'<tr><td colspan="2" class="mini">Список пуст.</td></tr>';bindRowActions(b)}function openFavorites(){openDrawer('⭐ Избранное',favoritesHTML(),renderFavorites)}
+
+function openAlerts(){openDrawer('Алерты',alertsModalHTML(),()=>{const findB=drawer.querySelector('#alertFind'), symI=drawer.querySelector('#alertSym'), liveD=drawer.querySelector('#liveTickerDisplay'), liveS=drawer.querySelector('#liveTickerSymbol'), liveP=drawer.querySelector('#liveTickerPrice'), priceI=drawer.querySelector('#alertPrice'), createB=drawer.querySelector('#alertCreate'), listEl=drawer.querySelector('#activeAlertsList');let cur='';function fmtp(x){return (+x).toLocaleString('ru-RU',{maximumFractionDigits:2})}function refresh(){listEl.innerHTML=alertEngine.list.length?'':'<div class="mini mono" style="color:#888">Список алертов пуст.</div>';alertEngine.list.forEach((a,i)=>{const row=document.createElement('div');row.className='row';row.style.cssText='margin-bottom:6px;padding:4px 0;border-bottom:1px dashed rgba(64,64,64,.5)';row.innerHTML=`<span class="mono n-blue" style="flex:1 1 80px" data-sym="${a.sym}">${a.sym}</span><span class="mono ${a.op==='>'?'n-green':'n-red'}" style="flex:1 1 80px;">${a.op} ${fmtp(a.price)}</span><span class="mini mono" style="flex:0 1 60px;">${a.fired?'✅':''}</span><button class="btn" data-idx="${i}" style="flex:0 1 auto;padding:4px 8px;font-size:12px;background:var(--red);border:none">Удалить</button>`;row.querySelector('button').addEventListener('click',ev=>{alertEngine.del(+ev.target.dataset.idx);refresh()});listEl.appendChild(row)})}refresh();findB.addEventListener('click',async()=>{let s=(symI.value||'').toUpperCase();if(s&&!s.endsWith('USDT'))s+='USDT';symI.value=s;cur=s;try{const t=await by('/fapi/v1/ticker/price',{symbol:s});liveS.textContent=s;liveP.textContent=fmtp(t.price||'—');liveD.style.display='flex'}catch(e){liveD.style.display='none';alert('Тикер не найден')}});createB.addEventListener('click',()=>{const target=(priceI.value||'').replace(/\s/g,'');const price=parseFloat(target);if(!cur||!price){alert('Найди тикер и введи цену');return}const op=price>=0?'>':'<';alertEngine.add({sym:cur,op,price});priceI.value='';refresh()})})}
+
+function moversHTML(){return `<div>Топ рост/падение</div><div class="seg" id="moversTabs" style="margin-top:10px"><button class="active" data-tab="up">🚀 Топ растущие</button><button data-tab="down">🪂 Топ падающие</button></div><div class="mini mono" style="margin-top:6px">Источник: Binance USDT Perp</div><table class="table"><thead><tr><th>Тикер</th><th>Цена</th><th>% 24ч</th><th>Фандинг</th><th>Объём (quote)</th><th>Сделки 24ч</th><th>Действия</th></tr></thead><tbody id="moversBody"></tbody></table>`}
+async function openMovers(){openDrawer('Топ рост/падение',loaderHTML('Загрузка топов'),async()=>{const body=$('drawerBody');const t=await by('/fapi/v1/ticker/24hr');const map=new Map(SYMBOLS.map(s=>[s.symbol,true]));const list=t.filter(x=>map.has(x.symbol)).map(x=>({sym:x.symbol,last:+x.lastPrice,pct24:+x.priceChangePercent,volQ:+x.quoteVolume,count:+x.count}));async function fundingOf(s){try{const r=await by('/fapi/v1/premiumIndex',{symbol:s});return +r.lastFundingRate*100}catch(e){return NaN}}const up=[...list].sort((a,b)=>b.pct24-a.pct24).slice(0,60);const down=[...list].sort((a,b)=>a.pct24-b.pct24).slice(0,60);const need=[...new Set([...up,...down].map(x=>x.sym))];const fund={};await Promise.all(need.map(async s=>fund[s]=await fundingOf(s)));const color=(v,suf='')=>`<span class="${v>0?'n-green':(v<0?'n-red':'')}">${fmt(v,2)}${suf}</span>`;function row(r){return `<tr><td class="mono" data-sym="${r.sym}">${r.sym}</td><td class="mono">${fmt(r.last)}</td><td class="mono">${color(r.pct24,'%')}</td><td class="mono">${color(fund[r.sym]||0,'%')}</td><td class="mono">${fmt(r.volQ,0)}</td><td class="mono">${fmt(r.count,0)}</td><td>${actionBtns(r.sym)}</td></tr>`}function render(tab){body.innerHTML=moversHTML();const tb=$('moversBody');tb.innerHTML=(tab==='up'?up:down).map(row).join('');bindRowActions(tb);$('moversTabs').addEventListener('click',ev=>{const b=ev.target.closest('button');if(!b)return;setActiveSeg($('moversTabs'),b);render(b.dataset.tab)},{once:true})}render('up')})}
+
+function setupsHTML(){return `<div>Сетапы (авто)</div><div class="seg" id="setupsTabs" style="margin-top:10px"><button class="active" data-tab="scalp">Скальпинг</button><button data-tab="intraday">Интрадей</button></div><div class="mini mono" style="margin-top:6px">Фильтры: ATR%, тренд (EMA50/EMA200), RSI, объём.</div><div class="mini n-amber">🕒 Подбор стратегий…</div><table class="table"><thead><tr><th>Тикер</th><th>Цена</th><th>ATR%</th><th>Тренд</th><th>RSI</th><th>Фандинг</th><th>Действия</th></tr></thead><tbody id="setupsBody"></tbody></table>`}
+const emaVal=(c,p)=>{const k=2/(p+1);let e=c[0];for(let i=1;i<c.length;i++)e=c[i]*k+e*(1-k);return e}
+async function atrPct(sym,interval){const rows=await kl(sym,interval,120);if(rows.length<30)return {atrp:NaN,rsi:NaN,trend:0,last:rows.at(-1)?.c||NaN};const A=atr(rows);const last=rows.at(-1).c;const closes=rows.map(r=>r.c);const R=rsi(closes);const e50=emaVal(closes.slice(-120),50), e200=emaVal(closes.slice(-200),200);const trend=((e50-e200)/last)*100;return {atrp:(A/last)*100,rsi:R,trend,last}}
+async function openSetups(){openDrawer('Сетапы',setupsHTML(),async()=>{const body=$('setupsBody');const t=await by('/fapi/v1/ticker/24hr');const map=new Map(SYMBOLS.map(s=>[s.symbol,true]));const list=t.filter(x=>map.has(x.symbol)).map(x=>({sym:x.symbol,last:+x.lastPrice,volQ:+x.quoteVolume}));const base=list.sort((a,b)=>b.volQ-a.volQ).slice(0,80).map(x=>x.sym);async function fundingOf(s){try{const r=await by('/fapi/v1/premiumIndex',{symbol:s});return +r.lastFundingRate*100}catch(e){return NaN}}async function build(tab){body.innerHTML=`<tr><td colspan="7">${loaderHTML('Считаю')}</td></tr>`;const iv=tab==='scalp'?'5m':'15m';const calcs=await Promise.all(base.map(async s=>{try{const m=await atrPct(s,iv);const f=await fundingOf(s);return {sym:s,...m,funding:f}}catch(e){return null}}));const res=calcs.filter(Boolean).filter(m=>{const okScalp=tab==='scalp'?m.atrp>=0.4:m.atrp>=0.8;const okRSI=tab==='scalp'?(m.rsi<35||m.rsi>65):(m.rsi<40||m.rsi>60);const okTrend=Math.abs(m.trend)>=0.2;return okScalp&&okRSI&&okTrend});res.sort((a,b)=>(Math.abs(b.trend)+b.atrp)-(Math.abs(a.trend)+a.atrp));body.innerHTML=res.slice(0,60).map(r=>`<tr><td class="mono" data-sym="${r.sym}">${r.sym}</td><td class="mono">${fmt(r.last)}</td><td class="mono">${fmt(r.atrp,2)}%</td><td class="mono">${r.trend>0?'<span class="n-green">▲</span>':'<span class="n-red">▼</span>'} ${fmt(r.trend,2)}%</td><td class="mono">${fmt(r.rsi,1)}</td><td class="mono">${(r.funding>0?'<span class="n-green">':'<span class="n-red">')+fmt(r.funding,4)+'%</span>'}</td><td>${actionBtns(r.sym)}</td></tr>`).join('')||'<tr><td colspan="7" class="mini">🧩 Пока нет подходящих сетапов.</td></tr>';bindRowActions(body)}await build('scalp');$('setupsTabs').addEventListener('click',async e=>{const b=e.target.closest('button');if(!b)return;setActiveSeg($('setupsTabs'),b);await build(b.dataset.tab)})})}
+
+function anomaliesHTML(){return `<div>Аномалии рынка</div><div class="mini mono" style="margin-top:6px">Критерии: ΔOI, ΔVolume, ΔPrice, ΔATR, ΔDelta (5m).</div><table class="table"><thead><tr><th>Тикер</th><th>ΔOI %</th><th>ΔЦена %</th><th>Imbalance %</th><th>Действия</th></tr></thead><tbody id="anomBody"></tbody></table>`}
+async function openAnomalies(){openDrawer('Аномалии',anomaliesHTML(),async()=>{const body=$('anomBody');const t=await by('/fapi/v1/ticker/24hr');const map=new Map(SYMBOLS.map(s=>[s.symbol,true]));const base=t.filter(x=>map.has(x.symbol)).sort((a,b)=>+b.quoteVolume-+a.quoteVolume).slice(0,150).map(x=>x.symbol);const res=[];for(const sym of base){try{const u=new URL('https://fapi.binance.com/futures/data/openInterestHist');u.searchParams.set('symbol',sym);u.searchParams.set('period','5m');u.searchParams.set('limit','2');const hist=await fetch(u).then(r=>r.json());const last=hist.at(-1), prev=hist.at(-2)||last;const dOiPct=(+prev.sumOpenInterestValue)?((+last.sumOpenInterestValue-+prev.sumOpenInterestValue)/+prev.sumOpenInterestValue)*100:0;const k=await kl(sym,'5m',24);const dPx=k.length>=2?((k.at(-1).c-k.at(-2).c)/k.at(-2).c)*100:0;const volAvg=k.slice(-13,-1).reduce((a,b)=>a+b.v,0)/Math.max(1,(k.length-1));const volNow=k.at(-1).v;const volSpike=volNow>volAvg*1.5;const A=atr(k), Ap=atr(k.slice(0,-1));const dAtrPct=Ap?((A-Ap)/Ap)*100:0;const tr=await by('/fapi/v1/trades',{symbol:sym,limit:500});let buy=0,sell=0;tr.forEach(t=>{const val=+t.qty*+t.price;if(t.isBuyerMaker)sell+=val;else buy+=val});const imb=(buy+sell)?((buy-sell)/(buy+sell))*100:0;const hit = (Math.abs(dOiPct)>=1.2) || (Math.abs(dPx)>=0.8) || volSpike || (Math.abs(dAtrPct)>=1.0) || (Math.abs(imb)>=10);if(hit){res.push({sym,dOiPct,dPx,imb,badge:volSpike?'🧨 VolSpike':(Math.abs(imb)>=10?'⚠️ Imb':'🧩')})}}catch(_){}}res.sort((a,b)=>(Math.abs(b.dOiPct)+Math.abs(b.dPx)+Math.abs(b.imb))-(Math.abs(a.dOiPct)+Math.abs(a.dPx)+Math.abs(a.imb)));body.innerHTML=res.slice(0,120).map(r=>`<tr><td class="mono" data-sym="${r.sym}">${r.badge} ${r.sym}</td><td class="mono">${r.dOiPct>0?'<span class="n-green">+':''}${fmt(r.dOiPct,2)}%</span></td><td class="mono">${r.dPx>0?'<span class="n-green">+':''}${fmt(r.dPx,2)}%</span></td><td class="mono">${r.imb>0?'<span class="n-green">+':''}${fmt(r.imb,2)}%</span></td><td>${actionBtns(r.sym)}</td></tr>`).join('')||'<tr><td colspan="5" class="mini">🕵️‍♂️ Аномалий не найдено.</td></tr>';bindRowActions(body)})}
+
+function openListings(){openDrawer('Листинги',`<div class="mini">📜 Скоро…</div>`)}
+
+document.querySelectorAll('.neon-wrap .btn, .btn-group-top .btn').forEach(btn=>btn.addEventListener('click',()=>{const t=btn.textContent.trim();if(t==='Алерты')return openAlerts();if(t==='Wallet')return openWallet();if(t==='⭐ Избранное')return openFavorites();if(t==='Топ рост/падение')return openMovers();if(t==='Сетапы')return openSetups();if(t==='Аномалии')return openAnomalies();if(t==='Листинги')return openListings();openDrawer(t,`<div class="mini">🧰 Модуль «${t}» в разработке.</div>`)}));
+
+function mount(){mountTV(currentSym);spawnAgent();spawnOI();connectWS()}mount();
+
+// --- Автоскролл к модалке и возврат ---
+let prevScrollY = 0;
+const openDrawerOriginal = openDrawer;
+openDrawer = function(title, html, onOpen) {
+  prevScrollY = window.scrollY;
+  openDrawerOriginal(title, html, onOpen);
+  setTimeout(()=>document.getElementById('drawer').scrollIntoView({behavior:'smooth',block:'center'}),100);
+};
+document.getElementById('drawerClose').addEventListener('click',()=>{
+  window.scrollTo({top: prevScrollY, behavior:'smooth'});
+});
+
+</script>
+</body>
+</html>
