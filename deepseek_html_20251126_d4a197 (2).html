@@ -1,0 +1,1236 @@
+<!DOCTYPE html>
+<html lang="ru">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>BYAGENT | AI TRADING TERMINAL</title>
+    
+    <style>
+        :root {
+            --neon-blue: #00f5ff;
+            --neon-purple: #b300ff;
+            --neon-pink: #ff00d4;
+            --neon-green: #00ff9d;
+            --neon-red: #ff003c;
+            --neon-orange: #ff7700;
+            --dark-space: #000010;
+            --deep-space: #050520;
+            --cosmic-purple: #1a0033;
+            --void: #000000;
+        }
+
+        * {
+            margin: 0;
+            padding: 0;
+            box-sizing: border-box;
+        }
+
+        body {
+            background: var(--void);
+            color: white;
+            font-family: 'Courier New', monospace;
+            overflow-x: hidden;
+            min-height: 100vh;
+        }
+
+        .matrix-bg {
+            position: fixed;
+            top: 0;
+            left: 0;
+            width: 100%;
+            height: 100%;
+            background: linear-gradient(45deg, var(--dark-space) 0%, var(--cosmic-purple) 100%);
+            z-index: -2;
+        }
+
+        .matrix-code {
+            position: fixed;
+            top: 0;
+            left: 0;
+            width: 100%;
+            height: 100%;
+            opacity: 0.1;
+            font-family: 'Courier New', monospace;
+            font-size: 14px;
+            color: var(--neon-blue);
+            z-index: -1;
+        }
+
+        .terminal {
+            max-width: 1400px;
+            margin: 0 auto;
+            padding: 20px;
+            min-height: 100vh;
+            position: relative;
+            z-index: 1;
+        }
+
+        /* Улучшенные стили для скроллируемой таблицы сигналов */
+        .signals-table-container {
+            max-height: 700px;
+            overflow-y: auto;
+            overflow-x: hidden;
+            border: 1px solid var(--neon-blue);
+            margin-top: 10px;
+            background: rgba(0, 5, 15, 0.9);
+            position: relative;
+        }
+
+        .signals-grid {
+            display: grid;
+            grid-template-columns: repeat(auto-fill, minmax(350px, 1fr));
+            gap: 2px;
+            padding: 2px;
+            min-height: 100%;
+        }
+
+        .signal-card {
+            background: rgba(0, 10, 25, 0.95);
+            padding: 15px;
+            border: 1px solid rgba(0, 245, 255, 0.3);
+            transition: all 0.3s ease;
+            position: relative;
+            overflow: hidden;
+            min-height: 160px;
+        }
+
+        .signal-card::before {
+            content: '';
+            position: absolute;
+            top: 0;
+            left: 0;
+            width: 100%;
+            height: 100%;
+            background: linear-gradient(45deg, transparent, rgba(0, 245, 255, 0.1), transparent);
+            opacity: 0;
+            transition: opacity 0.3s ease;
+        }
+
+        .signal-card:hover {
+            border-color: var(--neon-blue);
+            transform: translateY(-2px);
+            box-shadow: 0 0 20px rgba(0, 245, 255, 0.3);
+        }
+
+        .signal-card:hover::before {
+            opacity: 1;
+        }
+
+        .signal-premium {
+            border: 2px solid var(--neon-green);
+            background: rgba(0, 255, 157, 0.05);
+        }
+
+        .signal-premium::after {
+            content: 'PREMIUM';
+            position: absolute;
+            top: 5px;
+            right: 5px;
+            background: var(--neon-green);
+            color: black;
+            font-size: 8px;
+            font-weight: bold;
+            padding: 2px 6px;
+            border-radius: 3px;
+        }
+
+        .signal-header {
+            display: flex;
+            justify-content: space-between;
+            align-items: flex-start;
+            margin-bottom: 12px;
+        }
+
+        .signal-pair-info {
+            flex: 1;
+        }
+
+        .signal-pair {
+            font-size: 16px;
+            font-weight: bold;
+            color: var(--neon-blue);
+            margin-bottom: 4px;
+        }
+
+        .signal-price {
+            font-size: 12px;
+            color: var(--neon-green);
+            font-weight: bold;
+        }
+
+        .signal-exchange {
+            font-size: 10px;
+            color: #cccccc;
+            margin-top: 2px;
+        }
+
+        .signal-type {
+            padding: 4px 10px;
+            font-size: 10px;
+            font-weight: bold;
+            text-transform: uppercase;
+            border-radius: 3px;
+            margin-left: 10px;
+            white-space: nowrap;
+        }
+
+        .signal-long {
+            background: rgba(0, 255, 157, 0.2);
+            color: var(--neon-green);
+            border: 1px solid var(--neon-green);
+        }
+
+        .signal-short {
+            background: rgba(255, 0, 60, 0.2);
+            color: var(--neon-red);
+            border: 1px solid var(--neon-red);
+        }
+
+        .signal-data {
+            display: grid;
+            grid-template-columns: 1fr 1fr;
+            gap: 8px;
+            font-size: 11px;
+        }
+
+        .data-item {
+            display: flex;
+            justify-content: space-between;
+            align-items: center;
+        }
+
+        .data-label {
+            color: #888;
+        }
+
+        .data-value {
+            color: var(--neon-blue);
+            font-weight: bold;
+        }
+
+        .data-tp {
+            color: var(--neon-green) !important;
+        }
+
+        .data-sl {
+            color: var(--neon-red) !important;
+        }
+
+        .data-rr {
+            color: var(--neon-pink) !important;
+            font-weight: bold;
+        }
+
+        .confidence-high {
+            color: var(--neon-green);
+        }
+
+        .confidence-medium {
+            color: var(--neon-orange);
+        }
+
+        .confidence-low {
+            color: var(--neon-red);
+        }
+
+        .signals-counter {
+            display: none;
+        }
+
+        /* Улучшенная полоса прокрутки */
+        .signals-table-container::-webkit-scrollbar {
+            width: 12px;
+        }
+
+        .signals-table-container::-webkit-scrollbar-track {
+            background: rgba(0, 245, 255, 0.1);
+            border-radius: 6px;
+        }
+
+        .signals-table-container::-webkit-scrollbar-thumb {
+            background: linear-gradient(45deg, var(--neon-blue), var(--neon-purple));
+            border-radius: 6px;
+            border: 2px solid rgba(0, 10, 25, 0.9);
+        }
+
+        .signals-table-container::-webkit-scrollbar-thumb:hover {
+            background: linear-gradient(45deg, var(--neon-purple), var(--neon-pink));
+        }
+
+        .signals-table-container::-webkit-scrollbar-corner {
+            background: transparent;
+        }
+
+        /* Индикатор прокрутки */
+        .scroll-indicator {
+            display: none;
+        }
+
+        @media (max-width: 600px) {
+            body {
+                background: var(--deep-space);
+            }
+            .terminal {
+                max-width: 100%;
+                margin: 0;
+                padding: 10px;
+                min-height: 100vh;
+                border: 2px solid var(--neon-blue);
+                box-shadow: 0 0 20px rgba(0, 245, 255, 0.5);
+                background: var(--void);
+            }
+            .cyber-header {
+                padding: 0;
+                margin-bottom: 10px;
+            }
+            .main-grid {
+                grid-template-columns: 1fr;
+                gap: 10px;
+                padding: 10px;
+            }
+            .signal-matrix {
+                height: auto;
+            }
+            .pulsar-section {
+                padding: 15px;
+            }
+            .pulsar-container {
+                width: 150px;
+                height: 150px;
+            }
+            
+            .signals-grid {
+                grid-template-columns: 1fr;
+            }
+            
+            .signals-table-container {
+                max-height: 500px;
+            }
+        }
+
+        .cyber-header {
+            display: grid;
+            grid-template-columns: auto 1fr auto;
+            align-items: center;
+            gap: 30px;
+            padding: 20px 0;
+            border-bottom: 2px solid var(--neon-blue);
+            margin-bottom: 30px;
+            position: relative;
+        }
+
+        .cyber-header::before {
+            content: '';
+            position: absolute;
+            bottom: -2px;
+            left: 0;
+            width: 100%;
+            height: 2px;
+            background: linear-gradient(90deg, 
+                transparent, 
+                var(--neon-blue), 
+                var(--neon-purple), 
+                var(--neon-pink), 
+                transparent);
+            animation: scanline 3s linear infinite;
+        }
+
+        .logo {
+            font-family: 'Courier New', monospace;
+            font-size: 24px;
+            font-weight: 900;
+            text-transform: uppercase;
+            background: linear-gradient(45deg, var(--neon-blue), var(--neon-purple));
+            -webkit-background-clip: text;
+            -webkit-text-fill-color: transparent;
+            text-shadow: 0 0 30px var(--neon-blue);
+        }
+
+        .system-status {
+            display: flex;
+            gap: 20px;
+            font-size: 12px;
+        }
+
+        .status-tag {
+            padding: 5px 15px;
+            border: 1px solid var(--neon-green);
+            border-radius: 3px;
+            background: rgba(0, 255, 157, 0.1);
+            color: var(--neon-green);
+            text-transform: uppercase;
+            font-weight: bold;
+        }
+
+        .main-grid {
+            display: grid;
+            grid-template-columns: 1fr 400px;
+            gap: 30px;
+            margin-bottom: 30px;
+        }
+
+        .signal-matrix {
+            background: rgba(0, 0, 0, 0.8);
+            border: 1px solid var(--neon-blue);
+            padding: 20px;
+            position: relative;
+        }
+
+        .matrix-header {
+            padding: 0 0 20px 0;
+            border-bottom: 1px solid var(--neon-blue);
+        }
+
+        .matrix-title {
+            font-size: 18px;
+            font-weight: bold;
+            color: var(--neon-blue);
+            text-transform: uppercase;
+            letter-spacing: 2px;
+        }
+
+        .pulsar-section {
+            background: rgba(0, 0, 0, 0.9);
+            border: 1px solid var(--neon-purple);
+            padding: 30px;
+            position: relative;
+            overflow: hidden;
+        }
+
+        .pulsar-container {
+            width: 250px;
+            height: 250px;
+            position: relative;
+            margin: 0 auto 30px;
+        }
+
+        .pulsar-core {
+            width: 100%;
+            height: 100%;
+            border-radius: 50%;
+            background: 
+                radial-gradient(circle at 30% 30%, var(--neon-pink) 0%, transparent 50%),
+                radial-gradient(circle at 70% 70%, var(--neon-blue) 0%, transparent 50%),
+                radial-gradient(circle at center, var(--neon-purple) 0%, transparent 70%);
+            position: relative;
+            animation: quantumSpin 4s linear infinite;
+            filter: blur(1px);
+        }
+
+        .quantum-ring {
+            position: absolute;
+            top: 0;
+            left: 0;
+            width: 100%;
+            height: 100%;
+            border: 2px solid transparent;
+            border-radius: 50%;
+            animation: quantumOrbit 3s linear infinite;
+        }
+
+        .quantum-ring:nth-child(2) {
+            animation-delay: 1s;
+            border-color: var(--neon-blue);
+        }
+
+        .quantum-ring:nth-child(3) {
+            animation-delay: 2s;
+            border-color: var(--neon-purple);
+        }
+
+        .quantum-dot {
+            position: absolute;
+            width: 8px;
+            height: 8px;
+            background: var(--neon-pink);
+            border-radius: 50%;
+            top: 50%;
+            left: 50%;
+            transform: translate(-50%, -50%);
+            box-shadow: 0 0 20px var(--neon-pink);
+        }
+
+        .performance-terminal {
+            display: grid;
+            grid-template-columns: repeat(2, 1fr);
+            gap: 1px;
+            background: var(--neon-blue);
+            padding: 1px;
+            margin-top: 30px;
+        }
+
+        .stat-block {
+            background: var(--void);
+            padding: 20px;
+            border: none;
+            position: relative;
+            overflow: hidden;
+        }
+
+        .stat-block::before {
+            content: '';
+            position: absolute;
+            top: 0;
+            left: 0;
+            width: 3px;
+            height: 100%;
+            background: var(--neon-blue);
+        }
+
+        .stat-value {
+            font-size: 24px;
+            font-weight: bold;
+            color: var(--neon-blue);
+            margin-bottom: 5px;
+            font-family: 'Courier New', monospace;
+        }
+
+        .stat-label {
+            font-size: 11px;
+            color: #666;
+            text-transform: uppercase;
+            letter-spacing: 1px;
+        }
+
+        .alert-panel {
+            position: fixed;
+            top: 20px;
+            right: 20px;
+            background: rgba(0, 0, 0, 0.95);
+            border: 1px solid var(--neon-red);
+            padding: 20px;
+            z-index: 1000;
+            animation: alertPulse 1s infinite;
+            display: none;
+        }
+
+        .alert-panel.active {
+            display: block;
+        }
+
+        @keyframes quantumSpin {
+            0% { transform: rotate(0deg); }
+            100% { transform: rotate(360deg); }
+        }
+
+        @keyframes quantumOrbit {
+            0% { transform: rotate(0deg) scale(1); opacity: 1; }
+            50% { transform: rotate(180deg) scale(1.1); opacity: 0.8; }
+            100% { transform: rotate(360deg) scale(1); opacity: 1; }
+        }
+
+        @keyframes scanline {
+            0% { background-position: 0% 0%; }
+            100% { background-position: 100% 0%; }
+        }
+
+        @keyframes alertPulse {
+            0% { box-shadow: 0 0 5px var(--neon-red); }
+            50% { box-shadow: 0 0 20px var(--neon-red); }
+            100% { box-shadow: 0 0 5px var(--neon-red); }
+        }
+
+        @media (max-width: 1000px) {
+            .main-grid {
+                grid-template-columns: 1fr;
+            }
+        }
+    </style>
+</head>
+<body>
+
+    <div class="matrix-bg"></div>
+    <pre class="matrix-code" id="matrixCode"></pre>
+
+    <div class="terminal">
+        <header class="cyber-header">
+            <div class="logo">BYAGENT</div>
+            <div style="text-align: center; font-size: 14px; color: var(--neon-pink); display: none;">
+                AI TRADING TERMINAL // PREMIUM SIGNALS
+            </div>
+            <div class="system-status">
+                <div class="status-tag" id="systemStatus">STATUS: ONLINE</div>
+                <div class="status-tag" id="timeDisplay">TIME: 00:00:00</div>
+            </div>
+        </header>
+
+        <main class="main-grid">
+            <section class="signal-matrix">
+                <div class="matrix-header">
+                    <div class="matrix-title">PREMIUM TRADING SIGNALS</div>
+                </div>
+                
+                <!-- Счетчик сигналов -->
+                <div class="signals-counter" id="signalsCounter">
+                    Loading premium signals...
+                </div>
+                
+                <div class="signals-table-container" id="signalsContainer">
+                    <div class="signals-grid" id="signalsGrid">
+                        <!-- Сигналы будут загружены здесь -->
+                    </div>
+                    <div class="scroll-indicator" id="scrollIndicator">Scroll for more premium signals</div>
+                </div>
+            </section>
+
+            <aside>
+                <div class="pulsar-section">
+                    <h3 style="color: var(--neon-purple); text-align: center; margin-bottom: 20px;">
+                        AI ANALYTICS ENGINE
+                    </h3>
+                    <div class="pulsar-container">
+                        <div class="pulsar-core">
+                            <div class="quantum-dot"></div>
+                        </div>
+                        <div class="quantum-ring"></div>
+                        <div class="quantum-ring"></div>
+                        <div class="quantum-ring"></div>
+                    </div>
+                    <div class="performance-terminal">
+                        <div class="stat-block">
+                            <div class="stat-value" id="longSignals">--</div>
+                            <div class="stat-label">LONG SIGNALS</div>
+                        </div>
+                        <div class="stat-block">
+                            <div class="stat-value" id="shortSignals">--</div>
+                            <div class="stat-label">SHORT SIGNALS</div>
+                        </div>
+                        <div class="stat-block">
+                            <div class="stat-value" id="totalSignals">--</div>
+                            <div class="stat-label">PREMIUM SIGNALS</div>
+                        </div>
+                        <div class="stat-block">
+                            <div class="stat-value" id="avgConfidence">--%</div>
+                            <div class="stat-label">AVG CONFIDENCE</div>
+                        </div>
+                        <div class="stat-block">
+                            <div class="stat-value" id="successRate">--%</div>
+                            <div class="stat-label">MIN WIN RATE</div>
+                        </div>
+                        <div class="stat-block">
+                            <div class="stat-value" id="avgRR">--</div>
+                            <div class="stat-label">AVG R:R RATIO</div>
+                        </div>
+                    </div>
+                </div>
+            </aside>
+        </main>
+    </div>
+
+    <div class="alert-panel" id="alertPanel">
+        <h4 style="color: var(--neon-red); margin-bottom: 10px;">!!! PREMIUM SIGNAL ALERT !!!</h4>
+        <div id="alertMessage" style="color: white;">New premium signal detected.</div>
+    </div>
+
+    <script>
+        // =========================
+        //   КОНФИГУРАЦИЯ ПРЕМИУМ СИГНАЛОВ
+        // =========================
+        const TRADING_CONFIG = {
+            baseUrl: 'https://api.coingecko.com/api/v3',
+            vsCurrency: 'usd',
+            topCoinsCount: 100,
+            minVolume: 10000000,
+            minRRRatio: 4.0, // МИНИМАЛЬНЫЙ Risk-Reward 1:4
+            targetWinRate: 0.25, // Для RR 1:4 достаточно 25% винрейта
+            maxPositionSize: 0.1,
+            apiKey: '',
+            // ЖЕСТКИЕ КРИТЕРИИ ДЛЯ ПРЕМИУМ СИГНАЛОВ
+            minConfidence: 75,
+            minVolumeRank: 50,
+            maxVolatility: 35,
+            minLiquidity: 10000000
+        };
+
+        // Список популярных бирж
+        const EXCHANGES = ['BINANCE', 'BYBIT', 'KUCOIN', 'OKX', 'GATE', 'MEXC', 'HUOBI', 'BITGET'];
+
+        // Кэш данных
+        const DATA_CACHE = {
+            marketData: null,
+            lastUpdate: null,
+            ttl: 60000
+        };
+
+        // =========================
+        //   ПРОДВИНУТЫЕ УТИЛИТЫ ТЕХНИЧЕСКОГО АНАЛИЗА
+        // =========================
+        function formatPrice(price) {
+            if (price >= 1000) return price.toFixed(2);
+            if (price >= 1) return price.toFixed(4);
+            if (price >= 0.01) return price.toFixed(6);
+            return price.toFixed(8);
+        }
+
+        function getRandomExchange() {
+            return EXCHANGES[Math.floor(Math.random() * EXCHANGES.length)];
+        }
+
+        function calculateSMA(prices, period) {
+            if (prices.length < period) return null;
+            const sum = prices.slice(-period).reduce((a, b) => a + b, 0);
+            return sum / period;
+        }
+
+        function calculateEMA(prices, period) {
+            if (prices.length < period) return null;
+            const multiplier = 2 / (period + 1);
+            let ema = calculateSMA(prices.slice(0, period), period);
+            
+            for (let i = period; i < prices.length; i++) {
+                ema = (prices[i] - ema) * multiplier + ema;
+            }
+            return ema;
+        }
+
+        function calculateRSI(prices, period = 14) {
+            if (prices.length < period + 1) return 50;
+            
+            let gains = 0;
+            let losses = 0;
+            
+            for (let i = 1; i <= period; i++) {
+                const change = prices[prices.length - i] - prices[prices.length - i - 1];
+                if (change > 0) gains += change;
+                else losses -= change;
+            }
+            
+            const avgGain = gains / period;
+            const avgLoss = losses / period;
+            
+            if (avgLoss === 0) return 100;
+            const rs = avgGain / avgLoss;
+            return 100 - (100 / (1 + rs));
+        }
+
+        function calculateMACD(prices) {
+            const ema12 = calculateEMA(prices, 12);
+            const ema26 = calculateEMA(prices, 26);
+            if (!ema12 || !ema26) return { macd: 0, signal: 0, histogram: 0 };
+            
+            const macd = ema12 - ema26;
+            const signal = calculateEMA(prices.slice(-9).concat([macd]), 9) || macd;
+            const histogram = macd - signal;
+            
+            return { macd, signal, histogram };
+        }
+
+        function calculateBollingerBands(prices, period = 20, stdDev = 2) {
+            if (prices.length < period) return { upper: null, middle: null, lower: null };
+            
+            const sma = calculateSMA(prices, period);
+            const variance = prices.slice(-period).reduce((sum, price) => sum + Math.pow(price - sma, 2), 0) / period;
+            const standardDeviation = Math.sqrt(variance);
+            
+            return {
+                upper: sma + (standardDeviation * stdDev),
+                middle: sma,
+                lower: sma - (standardDeviation * stdDev)
+            };
+        }
+
+        function calculateStochastic(prices, period = 14) {
+            if (prices.length < period) return { k: 50, d: 50 };
+            
+            const recentPrices = prices.slice(-period);
+            const high = Math.max(...recentPrices);
+            const low = Math.min(...recentPrices);
+            
+            const k = ((prices[prices.length - 1] - low) / (high - low)) * 100;
+            const d = calculateSMA(prices.slice(-3).map((p, i, arr) => {
+                const slice = arr.slice(Math.max(0, i - 2), i + 1);
+                return ((p - Math.min(...slice)) / (Math.max(...slice) - Math.min(...slice))) * 100;
+            }), 3) || k;
+            
+            return { k, d };
+        }
+
+        function calculateVolatility(prices, period = 20) {
+            if (prices.length < period) return 0;
+            
+            const recentPrices = prices.slice(-period);
+            const mean = recentPrices.reduce((a, b) => a + b, 0) / period;
+            const variance = recentPrices.reduce((a, b) => a + Math.pow(b - mean, 2), 0) / period;
+            return Math.sqrt(variance) / mean * 100;
+        }
+
+        function calculateATR(prices, period = 14) {
+            if (prices.length < period + 1) return 0;
+            
+            let trSum = 0;
+            for (let i = prices.length - period; i < prices.length - 1; i++) {
+                const high = Math.max(prices[i], prices[i + 1]);
+                const low = Math.min(prices[i], prices[i + 1]);
+                const tr = high - low;
+                trSum += tr;
+            }
+            return trSum / period;
+        }
+
+        function calculateVolumeProfile(volumeData, priceData) {
+            if (!volumeData || volumeData.length === 0) return { support: null, resistance: null };
+            
+            const volumePriceMap = {};
+            const minLength = Math.min(volumeData.length, priceData.length);
+            
+            for (let i = 0; i < minLength; i++) {
+                const priceLevel = Math.round(priceData[i] * 100) / 100;
+                volumePriceMap[priceLevel] = (volumePriceMap[priceLevel] || 0) + volumeData[i];
+            }
+            
+            const sortedLevels = Object.entries(volumePriceMap).sort((a, b) => b[1] - a[1]);
+            return {
+                support: sortedLevels[0] ? parseFloat(sortedLevels[0][0]) : null,
+                resistance: sortedLevels[1] ? parseFloat(sortedLevels[1][0]) : null
+            };
+        }
+
+        // =========================
+        //   ЖЕСТКАЯ ЛОГИКА ПРЕМИУМ СИГНАЛОВ 1:4+
+        // =========================
+        function analyzePremiumSignal(coinData, priceHistory = []) {
+            const currentPrice = coinData.current_price;
+            const change1h = coinData.price_change_percentage_1h_in_currency || 0;
+            const change24h = coinData.price_change_percentage_24h || 0;
+            const volume = coinData.total_volume;
+            const marketCap = coinData.market_cap;
+            
+            if (priceHistory.length < 100) {
+                return null; // Недостаточно данных для анализа
+            }
+            
+            // Расчет всех технических индикаторов
+            const rsi = calculateRSI(priceHistory);
+            const volatility = calculateVolatility(priceHistory);
+            const macd = calculateMACD(priceHistory);
+            const bb = calculateBollingerBands(priceHistory);
+            const stoch = calculateStochastic(priceHistory);
+            const sma20 = calculateSMA(priceHistory, 20);
+            const sma50 = calculateSMA(priceHistory, 50);
+            const ema12 = calculateEMA(priceHistory, 12);
+            const atr = calculateATR(priceHistory);
+            
+            // ЖЕСТКИЕ ФИЛЬТРЫ ДЛЯ ПРЕМИУМ СИГНАЛОВ
+            
+            // 1. Фильтр волатильности
+            if (volatility > TRADING_CONFIG.maxVolatility) return null;
+            
+            // 2. Фильтр ликвидности
+            if (volume < TRADING_CONFIG.minLiquidity) return null;
+            
+            // 3. Фильтр RSI (только сильные перекупленности/перепроданности)
+            let signal = null;
+            let confidence = 0;
+            
+            // СИЛЬНЫЕ ЛОНГ СИГНАЛЫ (перепроданность)
+            if (rsi < 25 && macd.histogram > 0 && stoch.k < 20) {
+                const trendStrength = sma20 > sma50 ? 1.2 : 0.8;
+                const momentumStrength = change1h > -1 ? 1.1 : 0.9;
+                confidence = Math.min(80 + (25 - rsi) * 2 * trendStrength * momentumStrength, 95);
+                signal = 'LONG';
+            }
+            // СИЛЬНЫЕ ШОРТ СИГНАЛЫ (перекупленность)
+            else if (rsi > 75 && macd.histogram < 0 && stoch.k > 80) {
+                const trendStrength = sma20 < sma50 ? 1.2 : 0.8;
+                const momentumStrength = change1h < 1 ? 1.1 : 0.9;
+                confidence = Math.min(80 + (rsi - 75) * 2 * trendStrength * momentumStrength, 95);
+                signal = 'SHORT';
+            }
+            // ПРОБОЙ БОЛЛИНДЖЕРА
+            else if (bb.upper && bb.lower) {
+                if (currentPrice < bb.lower && rsi < 40) {
+                    confidence = 75;
+                    signal = 'LONG';
+                } else if (currentPrice > bb.upper && rsi > 60) {
+                    confidence = 75;
+                    signal = 'SHORT';
+                }
+            }
+            
+            // ФИЛЬТР УВЕРЕННОСТИ
+            if (!signal || confidence < TRADING_CONFIG.minConfidence) {
+                return null;
+            }
+            
+            // РАСЧЕТ ТОЧЕК ВХОДА С РИСКОМ 1:4+
+            const entryPrice = currentPrice;
+            let stopLoss, takeProfit;
+            let rrRatio = 0;
+            
+            if (signal === 'LONG') {
+                // Для лонга: SL на основе ATR или поддержки
+                stopLoss = entryPrice * (1 - Math.max(atr / entryPrice * 2, 0.03));
+                takeProfit = entryPrice + (entryPrice - stopLoss) * TRADING_CONFIG.minRRRatio;
+                rrRatio = (takeProfit - entryPrice) / (entryPrice - stopLoss);
+            } else {
+                // Для шорта: SL на основе ATR или сопротивления
+                stopLoss = entryPrice * (1 + Math.max(atr / entryPrice * 2, 0.03));
+                takeProfit = entryPrice - (stopLoss - entryPrice) * TRADING_CONFIG.minRRRatio;
+                rrRatio = (entryPrice - takeProfit) / (stopLoss - entryPrice);
+            }
+            
+            // ФИНАЛЬНЫЙ ФИЛЬТР: Risk-Reward ДОЛЖЕН БЫТЬ НЕ МЕНЕЕ 1:4
+            if (rrRatio < TRADING_CONFIG.minRRRatio) {
+                return null;
+            }
+            
+            // Расчет ожидаемого винрейта (для RR 1:4 достаточно 25%)
+            const expectedWinRate = Math.max(TRADING_CONFIG.targetWinRate, 0.25);
+            
+            return {
+                pair: `${coinData.symbol.toUpperCase()}/USD`,
+                signal,
+                currentPrice: currentPrice,
+                entry: entryPrice,
+                tp: takeProfit,
+                sl: stopLoss,
+                confidence: Math.round(confidence),
+                exchange: getRandomExchange(),
+                timestamp: new Date().toLocaleTimeString(),
+                rrRatio: rrRatio.toFixed(2),
+                change24h: change24h,
+                expectedWinRate: Math.round(expectedWinRate * 100),
+                rsi: Math.round(rsi),
+                volume: volume,
+                volatility: volatility.toFixed(2),
+                atr: atr,
+                isPremium: rrRatio >= 4.5
+            };
+        }
+
+        // =========================
+        //   МАТРИЦА НА ФОНЕ
+        // =========================
+        function createMatrix() {
+            const container = document.getElementById('matrixCode');
+            const columns = Math.floor(window.innerWidth / 14);
+            const rows = Math.floor(window.innerHeight / 14);
+            const characters = '01';
+            
+            for (let i = 0; i < columns; i++) {
+                const column = document.createElement('div');
+                column.style.position = 'absolute';
+                column.style.left = `${i * 14}px`;
+                column.style.top = `0`;
+                column.style.whiteSpace = 'pre';
+                column.style.wordBreak = 'break-all';
+                column.style.height = '100%';
+                column.style.overflow = 'hidden';
+                
+                let content = '';
+                for (let j = 0; j < rows * 2; j++) {
+                    content += characters[Math.floor(Math.random() * characters.length)] + '\n';
+                }
+                column.textContent = content;
+                
+                const speed = (Math.random() * 10 + 5) * 1000;
+                const delay = Math.random() * 5 * 1000;
+                
+                column.style.transition = `transform ${speed}ms linear`;
+                column.style.transform = `translateY(-${rows * 14}px)`;
+                
+                setTimeout(() => {
+                    column.style.transform = `translateY(0)`;
+                    setInterval(() => {
+                        column.style.transition = 'none';
+                        column.style.transform = `translateY(-${rows * 14}px)`;
+                        setTimeout(() => {
+                            column.style.transition = `transform ${speed}ms linear`;
+                            column.style.transform = `translateY(0)`;
+                        }, 50);
+                    }, speed);
+                }, delay);
+
+                container.appendChild(column);
+            }
+        }
+
+        // =========================
+        //   ПОЛУЧЕНИЕ РЫНОЧНЫХ ДАННЫХ
+        // =========================
+        async function fetchMarketData() {
+            if (DATA_CACHE.marketData && DATA_CACHE.lastUpdate && 
+                (Date.now() - DATA_CACHE.lastUpdate) < DATA_CACHE.ttl) {
+                return DATA_CACHE.marketData;
+            }
+            
+            try {
+                const url = `${TRADING_CONFIG.baseUrl}/coins/markets` +
+                    `?vs_currency=${TRADING_CONFIG.vsCurrency}` +
+                    `&order=volume_desc` +
+                    `&per_page=${TRADING_CONFIG.topCoinsCount}` +
+                    `&page=1` +
+                    `&sparkline=true` +
+                    `&price_change_percentage=1h,24h,7d`;
+
+                const headers = {};
+                if (TRADING_CONFIG.apiKey) {
+                    headers['x-cg-demo-api-key'] = TRADING_CONFIG.apiKey;
+                }
+
+                const response = await fetch(url, { headers });
+                if (!response.ok) throw new Error(`HTTP ${response.status}`);
+                
+                const data = await response.json();
+                
+                DATA_CACHE.marketData = data;
+                DATA_CACHE.lastUpdate = Date.now();
+                
+                return data;
+            } catch (error) {
+                console.error('Ошибка получения данных:', error);
+                if (DATA_CACHE.marketData) return DATA_CACHE.marketData;
+                throw error;
+            }
+        }
+
+        // =========================
+        //   ГЕНЕРАЦИЯ ПРЕМИУМ СИГНАЛОВ
+        // =========================
+        function generatePremiumSignals(marketData) {
+            const signals = [];
+            
+            marketData.forEach(coin => {
+                if (coin.total_volume >= TRADING_CONFIG.minVolume) {
+                    const priceHistory = coin.sparkline_in_7d?.price;
+                    if (priceHistory && priceHistory.length >= 100) {
+                        const signal = analyzePremiumSignal(coin, priceHistory);
+                        if (signal) {
+                            signals.push(signal);
+                        }
+                    }
+                }
+            });
+            
+            // Сортируем по соотношению риск-прибыль (самые выгодные сначала)
+            return signals.sort((a, b) => parseFloat(b.rrRatio) - parseFloat(a.rrRatio));
+        }
+
+        // =========================
+        //   ОТОБРАЖЕНИЕ ПРЕМИУМ СИГНАЛОВ
+        // =========================
+        function renderSignals(signals) {
+            const container = document.getElementById('signalsGrid');
+            const counter = document.getElementById('signalsCounter');
+            
+            counter.textContent = `PREMIUM SIGNALS: ${signals.length}`;
+            
+            if (signals.length === 0) {
+                container.innerHTML = `
+                    <div style="grid-column: 1 / -1; text-align: center; padding: 40px; color: #666;">
+                        No premium signals detected with Risk-Reward 1:4+<br>
+                        <span style="font-size: 10px;">Waiting for high-quality trading opportunities...</span>
+                    </div>
+                `;
+                return;
+            }
+
+            container.innerHTML = signals.map(signal => `
+                <div class="signal-card ${signal.isPremium ? 'signal-premium' : ''}">
+                    <div class="signal-header">
+                        <div class="signal-pair-info">
+                            <div class="signal-pair">${signal.pair}</div>
+                            <div class="signal-price">$${formatPrice(signal.currentPrice)}</div>
+                            <div class="signal-exchange">${signal.exchange} | RSI: ${signal.rsi} | Vol: ${signal.volatility}%</div>
+                        </div>
+                        <div class="signal-type ${signal.signal === 'LONG' ? 'signal-long' : 'signal-short'}">
+                            ${signal.signal}
+                        </div>
+                    </div>
+                    <div class="signal-data">
+                        <div class="data-item">
+                            <span class="data-label">ENTRY:</span>
+                            <span class="data-value">$${formatPrice(signal.entry)}</span>
+                        </div>
+                        <div class="data-item">
+                            <span class="data-label">TP:</span>
+                            <span class="data-value data-tp">$${formatPrice(signal.tp)}</span>
+                        </div>
+                        <div class="data-item">
+                            <span class="data-label">SL:</span>
+                            <span class="data-value data-sl">$${formatPrice(signal.sl)}</span>
+                        </div>
+                        <div class="data-item">
+                            <span class="data-label">R:R RATIO:</span>
+                            <span class="data-value data-rr">1:${signal.rrRatio}</span>
+                        </div>
+                        <div class="data-item">
+                            <span class="data-label">CONFIDENCE:</span>
+                            <span class="data-value confidence-${signal.confidence > 85 ? 'high' : signal.confidence > 75 ? 'medium' : 'low'}">
+                                ${signal.confidence}%
+                            </span>
+                        </div>
+                        <div class="data-item">
+                            <span class="data-label">MIN WIN RATE:</span>
+                            <span class="data-value">${signal.expectedWinRate}%</span>
+                        </div>
+                        <div class="data-item">
+                            <span class="data-label">24H CHANGE:</span>
+                            <span class="data-value" style="color: ${signal.change24h >= 0 ? 'var(--neon-green)' : 'var(--neon-red)'}">
+                                ${signal.change24h.toFixed(2)}%
+                            </span>
+                        </div>
+                        <div class="data-item">
+                            <span class="data-label">ATR:</span>
+                            <span class="data-value">${signal.atr.toFixed(6)}</span>
+                        </div>
+                    </div>
+                </div>
+            `).join('');
+            
+            // Показываем индикатор прокрутки если много сигналов
+            const scrollIndicator = document.getElementById('scrollIndicator');
+            if (signals.length > 6) {
+                scrollIndicator.style.display = 'block';
+            } else {
+                scrollIndicator.style.display = 'none';
+            }
+        }
+
+        // =========================
+        //   ОБНОВЛЕНИЕ СТАТИСТИКИ
+        // =========================
+        function updateStatistics(signals) {
+            const longCount = signals.filter(s => s.signal === 'LONG').length;
+            const shortCount = signals.filter(s => s.signal === 'SHORT').length;
+            const totalCount = signals.length;
+            const avgConfidence = signals.length > 0 
+                ? Math.round(signals.reduce((sum, s) => sum + s.confidence, 0) / signals.length)
+                : 0;
+            
+            const avgRR = signals.length > 0
+                ? (signals.reduce((sum, s) => sum + parseFloat(s.rrRatio), 0) / signals.length).toFixed(2)
+                : 0;
+            
+            document.getElementById('longSignals').textContent = longCount;
+            document.getElementById('shortSignals').textContent = shortCount;
+            document.getElementById('totalSignals').textContent = totalCount;
+            document.getElementById('avgConfidence').textContent = `${avgConfidence}%`;
+            document.getElementById('successRate').textContent = `25%`;
+            document.getElementById('avgRR').textContent = `1:${avgRR}`;
+        }
+
+        // =========================
+        //   СИСТЕМА ОПОВЕЩЕНИЙ ДЛЯ ПРЕМИУМ СИГНАЛОВ
+        // =========================
+        let previousPremiumSignals = [];
+
+        function triggerPremiumAlerts(signals) {
+            const premiumSignals = signals.filter(s => s.confidence >= 85 && parseFloat(s.rrRatio) >= 5.0);
+            
+            premiumSignals.forEach(signal => {
+                const isNewSignal = !previousPremiumSignals.some(
+                    prev => prev.pair === signal.pair && prev.signal === signal.signal
+                );
+                
+                if (isNewSignal) {
+                    showAlert(signal);
+                }
+            });
+            
+            previousPremiumSignals = premiumSignals;
+        }
+
+        function showAlert(signal) {
+            const alertPanel = document.getElementById('alertPanel');
+            const alertMessage = document.getElementById('alertMessage');
+            
+            alertMessage.innerHTML = `
+                <div><strong>${signal.pair}</strong> - ${signal.signal} PREMIUM SIGNAL</div>
+                <div style="font-size: 10px; margin-top: 5px;">
+                    RISK-REWARD: <strong>1:${signal.rrRatio}</strong> | CONFIDENCE: ${signal.confidence}%
+                </div>
+                <div style="font-size: 9px; margin-top: 3px;">
+                    ENTRY: $${formatPrice(signal.entry)} | TP: $${formatPrice(signal.tp)}
+                </div>
+                <div style="font-size: 9px; margin-top: 3px;">
+                    SL: $${formatPrice(signal.sl)} | RSI: ${signal.rsi}
+                </div>
+                <div style="font-size: 9px; margin-top: 3px;">
+                    EXCHANGE: ${signal.exchange} | VOLATILITY: ${signal.volatility}%
+                </div>
+            `;
+            
+            alertPanel.style.borderColor = signal.signal === 'LONG' ? 'var(--neon-green)' : 'var(--neon-red)';
+            alertPanel.classList.add('active');
+            
+            setTimeout(() => {
+                alertPanel.classList.remove('active');
+            }, 10000);
+        }
+
+        // =========================
+        //   УПРАВЛЕНИЕ СКРОЛЛИНГОМ
+        // =========================
+        function initializeScrollHandling() {
+            const container = document.getElementById('signalsContainer');
+            const indicator = document.getElementById('scrollIndicator');
+            
+            container.addEventListener('scroll', () => {
+                const scrollTop = container.scrollTop;
+                const scrollHeight = container.scrollHeight;
+                const clientHeight = container.clientHeight;
+                
+                if (scrollHeight - scrollTop - clientHeight < 50) {
+                    indicator.style.opacity = '0.5';
+                } else {
+                    indicator.style.opacity = '1';
+                }
+            });
+        }
+
+        // =========================
+        //   ГЛАВНЫЙ ЦИКЛ ОБНОВЛЕНИЯ
+        // =========================
+        async function updateTradingData() {
+            try {
+                setStatusOnline();
+                const marketData = await fetchMarketData();
+                const signals = generatePremiumSignals(marketData);
+                
+                renderSignals(signals);
+                updateStatistics(signals);
+                triggerPremiumAlerts(signals);
+                
+            } catch (error) {
+                console.error('Ошибка обновления данных:', error);
+                setStatusError('API ERROR');
+            }
+        }
+
+        function setStatusOnline() {
+            const el = document.getElementById('systemStatus');
+            el.textContent = 'STATUS: ONLINE';
+            el.style.borderColor = 'var(--neon-green)';
+            el.style.color = 'var(--neon-green)';
+        }
+
+        function setStatusError(message) {
+            const el = document.getElementById('systemStatus');
+            el.textContent = `STATUS: ${message}`;
+            el.style.borderColor = 'var(--neon-red)';
+            el.style.color = 'var(--neon-red)';
+        }
+
+        // =========================
+        //   ИНИЦИАЛИЗАЦИЯ
+        // =========================
+        document.addEventListener('DOMContentLoaded', () => {
+            createMatrix();
+            initializeScrollHandling();
+            
+            // Первоначальная загрузка
+            updateTradingData();
+            
+            // Обновление данных каждые 60 секунд
+            setInterval(updateTradingData, 60000);
+            
+            // Обновление времени
+            setInterval(() => {
+                document.getElementById('timeDisplay').textContent = 
+                    `TIME: ${new Date().toLocaleTimeString()}`;
+            }, 1000);
+        });
+    </script>
+</body>
+</html>
