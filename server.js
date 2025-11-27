@@ -4,7 +4,6 @@ import axios from 'axios';
 import cron from 'node-cron';
 import { Telegraf } from 'telegraf';
 import mongoose from 'mongoose';
-import { WebSocketServer } from 'ws';
 import path from 'path';
 import { fileURLToPath } from 'url';
 
@@ -17,8 +16,6 @@ const PORT = process.env.PORT || 3000;
 // Middleware
 app.use(cors());
 app.use(express.json());
-
-// Serve static files (index.html)
 app.use(express.static(__dirname));
 
 // Environment variables
@@ -27,22 +24,39 @@ const TELEGRAM_CHAT_ID = process.env.TELEGRAM_CHAT_ID;
 const MONGODB_URI = process.env.MONGODB_URI || 'mongodb://localhost:27017/byagent';
 const COINGECKO_API_KEY = process.env.COINGECKO_API_KEY;
 
+// Debug environment variables
+console.log('=== ENV VARIABLES ===');
+console.log('TELEGRAM_BOT_TOKEN:', TELEGRAM_BOT_TOKEN ? 'SET' : 'MISSING');
+console.log('TELEGRAM_CHAT_ID:', TELEGRAM_CHAT_ID || 'MISSING');
+console.log('MONGODB_URI:', MONGODB_URI ? 'SET' : 'MISSING');
+console.log('COINGECKO_API_KEY:', COINGECKO_API_KEY ? 'SET' : 'MISSING');
+console.log('=====================');
+
 // Initialize Telegram Bot
 const bot = TELEGRAM_BOT_TOKEN ? new Telegraf(TELEGRAM_BOT_TOKEN) : null;
 
 if (bot) {
   console.log('Telegram bot initialized');
-} else {
-  console.log('Telegram bot NOT initialized, TELEGRAM_BOT_TOKEN is missing');
-}
-
-// === TELEGRAM WEBHOOK ROUTE ===
-if (bot) {
+  
+  // Set webhook explicitly
+  const WEBHOOK_URL = `https://${process.env.RENDER_EXTERNAL_HOSTNAME || 'your-app.onrender.com'}/webhook`;
+  
   app.post('/webhook', (req, res) => {
-    console.log('Telegram update received:', req.body);
-    bot.handleUpdate(req.body);
-    res.sendStatus(200);
+    console.log('📨 Telegram webhook received');
+    bot.handleUpdate(req.body, res);
   });
+
+  // Test bot connection
+  bot.telegram.getMe()
+    .then(botInfo => {
+      console.log(`🤖 Bot connected: @${botInfo.username}`);
+    })
+    .catch(err => {
+      console.error('❌ Bot connection failed:', err.message);
+    });
+
+} else {
+  console.log('❌ Telegram bot NOT initialized - TELEGRAM_BOT_TOKEN is missing');
 }
 
 // MongoDB Models
@@ -60,7 +74,8 @@ const SignalSchema = new mongoose.Schema({
   isGodTier: Boolean,
   isPremium: Boolean,
   confirmations: [String],
-  sentToTelegram: { type: Boolean, default: false }
+  sentToTelegram: { type: Boolean, default: false },
+  telegramMessageId: String
 });
 
 const Signal = mongoose.model('Signal', SignalSchema);
@@ -82,7 +97,11 @@ const TRADING_CONFIG = {
 
 const EXCHANGES = ['BINANCE', 'BYBIT', 'KUCOIN', 'OKX', 'GATE', 'MEXC', 'HUOBI', 'BITGET'];
 
-// Технические индикаторы
+// [ОСТАЛЬНЫЕ ФУНКЦИИ ИНДИКАТОРОВ ОСТАЮТСЯ ТАКИМИ ЖЕ...]
+// calculateSMA, calculateEMA, calculateRSI, calculateMACD, calculateBollingerBands, 
+// calculateStochastic, calculateVolatility, calculateATR, calculateWilliamsR
+
+// Технические индикаторы (сохраняем как есть)
 function calculateSMA(prices, period) {
   if (prices.length < period) return null;
   const sum = prices.slice(-period).reduce((a, b) => a + b, 0);
@@ -195,7 +214,7 @@ function calculateWilliamsR(prices, period = 14) {
   return ((highest - current) / (highest - lowest)) * -100;
 }
 
-// Улучшенная логика анализа
+// [ФУНКЦИЯ analyzeGodTierSignal ОСТАЕТСЯ ТАКОЙ ЖЕ...]
 function analyzeGodTierSignal(coinData, priceHistory = []) {
   const currentPrice = coinData.current_price;
   const change1h = coinData.price_change_percentage_1h_in_currency || 0;
@@ -203,12 +222,10 @@ function analyzeGodTierSignal(coinData, priceHistory = []) {
   const volume = coinData.total_volume;
   const marketCap = coinData.market_cap;
   
-  // Строгие фильтры
   if (volume < TRADING_CONFIG.minVolume) return null;
   if (marketCap < TRADING_CONFIG.minMarketCap) return null;
   if (priceHistory.length < 100) return null;
   
-  // Расчет индикаторов
   const rsi = calculateRSI(priceHistory);
   const volatility = calculateVolatility(priceHistory);
   const macd = calculateMACD(priceHistory);
@@ -222,7 +239,6 @@ function analyzeGodTierSignal(coinData, priceHistory = []) {
   
   if (volatility > TRADING_CONFIG.maxVolatility) return null;
   
-  // Система баллов и подтверждений
   let qualityScore = 0;
   const confirmations = [];
   
@@ -264,7 +280,6 @@ function analyzeGodTierSignal(coinData, priceHistory = []) {
     return null;
   }
   
-  // Определение сигнала
   let signal = null;
   let confidence = 0;
   
@@ -280,7 +295,6 @@ function analyzeGodTierSignal(coinData, priceHistory = []) {
   
   if (!signal || confidence < TRADING_CONFIG.minConfidence) return null;
   
-  // Расчет точек входа
   const entryPrice = currentPrice;
   let stopLoss, takeProfit;
   let rrRatio = 0;
@@ -366,7 +380,6 @@ async function generateSignals() {
       }
     }
     
-    // Сортировка по качеству
     return signals.sort((a, b) => {
       if (a.isGodTier && !b.isGodTier) return -1;
       if (!a.isGodTier && b.isGodTier) return 1;
@@ -378,17 +391,20 @@ async function generateSignals() {
   }
 }
 
-// Отправка в Telegram
+// Улучшенная отправка в Telegram
 async function sendToTelegram(signal) {
   if (!bot || !TELEGRAM_CHAT_ID) {
-    console.log('Telegram bot not configured');
-    return;
+    console.log('❌ Telegram bot not configured properly');
+    console.log('Bot:', bot ? 'OK' : 'MISSING');
+    console.log('Chat ID:', TELEGRAM_CHAT_ID || 'MISSING');
+    return false;
   }
 
-  const direction = signal.signal === 'LONG' ? '🟢 LONG' : '🔴 SHORT';
-  const tier = signal.isGodTier ? '🔥 GOD TIER' : '⭐ PREMIUM';
-  
-  const message = `
+  try {
+    const direction = signal.signal === 'LONG' ? '🟢 LONG' : '🔴 SHORT';
+    const tier = signal.isGodTier ? '🔥 GOD TIER' : '⭐ PREMIUM';
+    
+    const message = `
 ${tier} SIGNAL
 ${direction} ${signal.pair}
 
@@ -408,20 +424,43 @@ ${direction} ${signal.pair}
 
 ⏰ Time: ${signal.timestamp.toLocaleTimeString()}
 🏦 Exchange: ${signal.exchange}
-  `;
+    `.trim();
 
-  try {
-    await bot.telegram.sendMessage(TELEGRAM_CHAT_ID, message);
-    console.log(`Signal sent to Telegram: ${signal.pair}`);
+    console.log(`📤 Attempting to send signal to Telegram: ${signal.pair}`);
     
-    // Помечаем сигнал как отправленный
+    const sentMessage = await bot.telegram.sendMessage(TELEGRAM_CHAT_ID, message, {
+      parse_mode: 'HTML'
+    });
+    
+    console.log(`✅ Signal sent to Telegram: ${signal.pair}`);
+    console.log(`📨 Message ID: ${sentMessage.message_id}`);
+    
+    // Сохраняем в базу с ID сообщения
     await Signal.findOneAndUpdate(
-      { pair: signal.pair, timestamp: signal.timestamp },
-      { sentToTelegram: true },
-      { upsert: true, new: true }
+      { 
+        pair: signal.pair, 
+        timestamp: { 
+          $gte: new Date(Date.now() - 2 * 60 * 1000) // 2 минуты
+        } 
+      },
+      { 
+        sentToTelegram: true, 
+        telegramMessageId: sentMessage.message_id,
+        ...signal 
+      },
+      { 
+        upsert: true, 
+        new: true 
+      }
     );
+    
+    return true;
   } catch (error) {
-    console.error('Ошибка отправки в Telegram:', error.message);
+    console.error('❌ Ошибка отправки в Telegram:', error.message);
+    if (error.response) {
+      console.error('Telegram API Error:', error.response.data);
+    }
+    return false;
   }
 }
 
@@ -446,8 +485,53 @@ app.get('/api/health', (req, res) => {
   res.json({
     status: 'OK',
     timestamp: new Date().toISOString(),
-    version: '1.0.0'
+    version: '1.0.0',
+    telegram: {
+      bot: !!bot,
+      chat_id: !!TELEGRAM_CHAT_ID
+    }
   });
+});
+
+// Тестовый endpoint для отправки сообщения
+app.post('/api/test-telegram', async (req, res) => {
+  if (!bot || !TELEGRAM_CHAT_ID) {
+    return res.status(400).json({ 
+      success: false, 
+      error: 'Telegram not configured' 
+    });
+  }
+
+  try {
+    const testMessage = {
+      pair: 'TEST/USDT',
+      signal: 'LONG',
+      entry: 100.50,
+      tp: 150.75,
+      sl: 90.25,
+      confidence: 95,
+      qualityScore: 9,
+      rrRatio: 5.0,
+      rsi: 25,
+      volatility: 5.5,
+      change24h: 2.5,
+      confirmations: ['RSI_OVERSOLD', 'MACD_BULLISH', 'BB_OVERSOLD'],
+      timestamp: new Date(),
+      isGodTier: true,
+      isPremium: false,
+      exchange: 'BINANCE'
+    };
+
+    const success = await sendToTelegram(testMessage);
+    
+    if (success) {
+      res.json({ success: true, message: 'Test message sent to Telegram' });
+    } else {
+      res.status(500).json({ success: false, error: 'Failed to send test message' });
+    }
+  } catch (error) {
+    res.status(500).json({ success: false, error: error.message });
+  }
 });
 
 app.post('/api/webhook', async (req, res) => {
@@ -480,24 +564,39 @@ async function executeCronTask() {
   try {
     const signals = await generateSignals();
     
-    // Отправляем только GOD TIER сигналы в Telegram
-    const godTierSignals = signals.filter(s => s.isGodTier);
+    console.log(`📊 Found ${signals.length} total signals`);
     
-    for (const signal of godTierSignals) {
-      // Проверяем, не отправляли ли мы уже этот сигнал
+    // Отправляем GOD TIER и PREMIUM сигналы
+    const signalsToSend = signals.filter(s => s.isGodTier || s.isPremium);
+    console.log(`🎯 Filtered ${signalsToSend.length} signals to send (God Tier: ${signals.filter(s => s.isGodTier).length}, Premium: ${signals.filter(s => s.isPremium).length})`);
+    
+    let sentCount = 0;
+    
+    for (const signal of signalsToSend) {
+      // Более простая проверка - только за последние 10 минут
+      const tenMinutesAgo = new Date(Date.now() - 10 * 60 * 1000);
+      
       const existing = await Signal.findOne({
         pair: signal.pair,
         sentToTelegram: true,
-        timestamp: { $gte: new Date(Date.now() - 30 * 60 * 1000) }
+        timestamp: { $gte: tenMinutesAgo }
       });
       
       if (!existing) {
-        await sendToTelegram(signal);
-        await new Promise(resolve => setTimeout(resolve, 1000));
+        console.log(`📨 Sending signal: ${signal.pair} (${signal.signal})`);
+        const success = await sendToTelegram(signal);
+        if (success) {
+          sentCount++;
+          // Ждем между сообщениями
+          await new Promise(resolve => setTimeout(resolve, 2000));
+        }
+      } else {
+        console.log(`⏭️  Signal already sent recently: ${signal.pair}`);
       }
     }
     
-    console.log(`✅ Generated ${signals.length} signals, sent ${godTierSignals.length} to Telegram`);
+    console.log(`✅ Generated ${signals.length} signals, sent ${sentCount} to Telegram`);
+    
   } catch (error) {
     console.error('❌ Error in cron job:', error);
   }
@@ -507,21 +606,27 @@ async function executeCronTask() {
 async function startServer() {
   try {
     // Подключаемся к MongoDB
-    if (MONGODB_URI) {
+    if (MONGODB_URI && MONGODB_URI !== 'mongodb://localhost:27017/byagent') {
       await mongoose.connect(MONGODB_URI);
-      console.log('Connected to MongoDB');
+      console.log('✅ Connected to MongoDB');
+    } else {
+      console.log('❌ MongoDB not connected - using in-memory storage only');
     }
 
     // Запускаем сервер
     app.listen(PORT, '0.0.0.0', () => {
       console.log(`🚀 Server running on port ${PORT}`);
       console.log(`📊 API available at http://localhost:${PORT}/api/signals`);
+      console.log(`🧪 Test Telegram: POST http://localhost:${PORT}/api/test-telegram`);
     });
 
-    // Запускаем крон-задачи (после объявления всех функций)
+    // Запускаем крон-задачи
     cron.schedule('*/2 * * * *', executeCronTask);
+    console.log('✅ Cron job scheduled every 2 minutes');
 
-    console.log('✅ Cron jobs scheduled');
+    // Запускаем сразу при старте
+    console.log('🚀 Running initial signal generation...');
+    executeCronTask();
 
   } catch (error) {
     console.error('❌ Failed to start server:', error);
