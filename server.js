@@ -26,40 +26,85 @@ const COINGECKO_API_KEY = process.env.COINGECKO_API_KEY;
 
 // Debug environment variables
 console.log('=== ENV VARIABLES ===');
-console.log('TELEGRAM_BOT_TOKEN:', TELEGRAM_BOT_TOKEN ? 'SET' : 'MISSING');
-console.log('TELEGRAM_CHAT_ID:', TELEGRAM_CHAT_ID || 'MISSING');
+console.log('TELEGRAM_BOT_TOKEN:', TELEGRAM_BOT_TOKEN ? `SET (length: ${TELEGRAM_BOT_TOKEN.length})` : 'MISSING');
+console.log('TELEGRAM_CHAT_ID:', TELEGRAM_CHAT_ID ? `"${TELEGRAM_CHAT_ID}"` : 'MISSING');
 console.log('MONGODB_URI:', MONGODB_URI ? 'SET' : 'MISSING');
-console.log('COINGECKO_API_KEY:', COINGECKO_API_KEY ? 'SET' : 'MISSING');
 console.log('=====================');
 
 // Initialize Telegram Bot
-const bot = TELEGRAM_BOT_TOKEN ? new Telegraf(TELEGRAM_BOT_TOKEN) : null;
+let bot = null;
+let botInfo = null;
 
+if (TELEGRAM_BOT_TOKEN) {
+  try {
+    bot = new Telegraf(TELEGRAM_BOT_TOKEN);
+    
+    // Test bot connection and get info
+    bot.telegram.getMe()
+      .then(info => {
+        botInfo = info;
+        console.log(`✅ Bot connected: @${info.username} (${info.first_name})`);
+        
+        // Set up commands
+        bot.start((ctx) => {
+          const chatId = ctx.chat.id;
+          const username = ctx.chat.username ? `@${ctx.chat.username}` : 'No username';
+          const firstName = ctx.chat.first_name || 'Unknown';
+          
+          console.log(`💬 Start command received from chat ID: ${chatId}, User: ${firstName} ${username}`);
+          
+          ctx.reply(
+            `🤖 Welcome to Crypto Signals Bot!\n\n` +
+            `📊 Your Chat ID: <code>${chatId}</code>\n` +
+            `👤 User: ${firstName} ${username}\n\n` +
+            `💡 Use this Chat ID in your environment variables:\n` +
+            `<code>TELEGRAM_CHAT_ID=${chatId}</code>\n\n` +
+            `📈 Signals will be sent here automatically.`,
+            { parse_mode: 'HTML' }
+          );
+        });
+
+        bot.command('chatid', (ctx) => {
+          const chatId = ctx.chat.id;
+          ctx.reply(
+            `💬 Your Chat ID: <code>${chatId}</code>\n\n` +
+            `Use this in your environment variables:\n` +
+            `<code>TELEGRAM_CHAT_ID=${chatId}</code>`,
+            { parse_mode: 'HTML' }
+          );
+        });
+
+        // Launch bot in webhook mode for Render
+        const WEBHOOK_DOMAIN = process.env.RENDER_EXTERNAL_HOSTNAME || 'by-agent.onrender.com';
+        const WEBHOOK_URL = `https://${WEBHOOK_DOMAIN}/webhook`;
+        
+        bot.telegram.setWebhook(WEBHOOK_URL)
+          .then(() => console.log(`✅ Webhook set to: ${WEBHOOK_URL}`))
+          .catch(err => console.error('❌ Webhook error:', err.message));
+
+      })
+      .catch(err => {
+        console.error('❌ Bot connection failed:', err.message);
+        bot = null;
+      });
+      
+  } catch (error) {
+    console.error('❌ Bot initialization failed:', error.message);
+    bot = null;
+  }
+} else {
+  console.log('❌ TELEGRAM_BOT_TOKEN not provided');
+}
+
+// Webhook route
 if (bot) {
-  console.log('Telegram bot initialized');
-  
-  // Set webhook explicitly
-  const WEBHOOK_URL = `https://${process.env.RENDER_EXTERNAL_HOSTNAME || 'your-app.onrender.com'}/webhook`;
-  
   app.post('/webhook', (req, res) => {
     console.log('📨 Telegram webhook received');
     bot.handleUpdate(req.body, res);
   });
-
-  // Test bot connection
-  bot.telegram.getMe()
-    .then(botInfo => {
-      console.log(`🤖 Bot connected: @${botInfo.username}`);
-    })
-    .catch(err => {
-      console.error('❌ Bot connection failed:', err.message);
-    });
-
-} else {
-  console.log('❌ Telegram bot NOT initialized - TELEGRAM_BOT_TOKEN is missing');
 }
 
-// MongoDB Models
+// MongoDB Models (остается без изменений)
 const SignalSchema = new mongoose.Schema({
   pair: String,
   signal: String,
@@ -80,7 +125,7 @@ const SignalSchema = new mongoose.Schema({
 
 const Signal = mongoose.model('Signal', SignalSchema);
 
-// Конфигурация торговли
+// Конфигурация и индикаторы (остаются без изменений)
 const TRADING_CONFIG = {
   baseUrl: 'https://api.coingecko.com/api/v3',
   vsCurrency: 'usd',
@@ -97,11 +142,7 @@ const TRADING_CONFIG = {
 
 const EXCHANGES = ['BINANCE', 'BYBIT', 'KUCOIN', 'OKX', 'GATE', 'MEXC', 'HUOBI', 'BITGET'];
 
-// [ОСТАЛЬНЫЕ ФУНКЦИИ ИНДИКАТОРОВ ОСТАЮТСЯ ТАКИМИ ЖЕ...]
-// calculateSMA, calculateEMA, calculateRSI, calculateMACD, calculateBollingerBands, 
-// calculateStochastic, calculateVolatility, calculateATR, calculateWilliamsR
-
-// Технические индикаторы (сохраняем как есть)
+// [ВСЕ ФУНКЦИИ ИНДИКАТОРОВ ОСТАЮТСЯ БЕЗ ИЗМЕНЕНИЙ]
 function calculateSMA(prices, period) {
   if (prices.length < period) return null;
   const sum = prices.slice(-period).reduce((a, b) => a + b, 0);
@@ -214,7 +255,6 @@ function calculateWilliamsR(prices, period = 14) {
   return ((highest - current) / (highest - lowest)) * -100;
 }
 
-// [ФУНКЦИЯ analyzeGodTierSignal ОСТАЕТСЯ ТАКОЙ ЖЕ...]
 function analyzeGodTierSignal(coinData, priceHistory = []) {
   const currentPrice = coinData.current_price;
   const change1h = coinData.price_change_percentage_1h_in_currency || 0;
@@ -337,7 +377,6 @@ function analyzeGodTierSignal(coinData, priceHistory = []) {
   };
 }
 
-// Получение данных с CoinGecko
 async function fetchMarketData() {
   try {
     const url = `${TRADING_CONFIG.baseUrl}/coins/markets` +
@@ -361,7 +400,6 @@ async function fetchMarketData() {
   }
 }
 
-// Генерация сигналов
 async function generateSignals() {
   try {
     const marketData = await fetchMarketData();
@@ -394,13 +432,20 @@ async function generateSignals() {
 // Улучшенная отправка в Telegram
 async function sendToTelegram(signal) {
   if (!bot || !TELEGRAM_CHAT_ID) {
-    console.log('❌ Telegram bot not configured properly');
-    console.log('Bot:', bot ? 'OK' : 'MISSING');
-    console.log('Chat ID:', TELEGRAM_CHAT_ID || 'MISSING');
+    console.log('❌ Telegram not configured');
     return false;
   }
 
   try {
+    // Проверяем валидность chat_id
+    const chatId = TELEGRAM_CHAT_ID.trim();
+    
+    // Проверяем, что chat_id числовой (или строка с числом)
+    if (!/^-?\d+$/.test(chatId)) {
+      console.error(`❌ Invalid TELEGRAM_CHAT_ID format: "${chatId}" - must be numeric`);
+      return false;
+    }
+
     const direction = signal.signal === 'LONG' ? '🟢 LONG' : '🔴 SHORT';
     const tier = signal.isGodTier ? '🔥 GOD TIER' : '⭐ PREMIUM';
     
@@ -426,39 +471,47 @@ ${direction} ${signal.pair}
 🏦 Exchange: ${signal.exchange}
     `.trim();
 
-    console.log(`📤 Attempting to send signal to Telegram: ${signal.pair}`);
+    console.log(`📤 Sending to chat ID: ${chatId}`);
     
-    const sentMessage = await bot.telegram.sendMessage(TELEGRAM_CHAT_ID, message, {
-      parse_mode: 'HTML'
-    });
+    const sentMessage = await bot.telegram.sendMessage(chatId, message);
     
-    console.log(`✅ Signal sent to Telegram: ${signal.pair}`);
-    console.log(`📨 Message ID: ${sentMessage.message_id}`);
+    console.log(`✅ Signal sent to Telegram! Message ID: ${sentMessage.message_id}`);
     
-    // Сохраняем в базу с ID сообщения
-    await Signal.findOneAndUpdate(
-      { 
-        pair: signal.pair, 
-        timestamp: { 
-          $gte: new Date(Date.now() - 2 * 60 * 1000) // 2 минуты
-        } 
-      },
-      { 
-        sentToTelegram: true, 
-        telegramMessageId: sentMessage.message_id,
-        ...signal 
-      },
-      { 
-        upsert: true, 
-        new: true 
-      }
-    );
+    // Сохраняем в базу
+    if (MONGODB_URI && MONGODB_URI !== 'mongodb://localhost:27017/byagent') {
+      await Signal.findOneAndUpdate(
+        { 
+          pair: signal.pair, 
+          timestamp: { 
+            $gte: new Date(Date.now() - 10 * 60 * 1000)
+          } 
+        },
+        { 
+          sentToTelegram: true, 
+          telegramMessageId: sentMessage.message_id,
+          ...signal 
+        },
+        { 
+          upsert: true, 
+          new: true 
+        }
+      );
+    }
     
     return true;
   } catch (error) {
-    console.error('❌ Ошибка отправки в Telegram:', error.message);
+    console.error('❌ Telegram send error:', error.message);
     if (error.response) {
-      console.error('Telegram API Error:', error.response.data);
+      console.error('Telegram API Response:', error.response.data);
+      
+      // Specific error handling
+      if (error.response.data.description === 'Bad Request: chat not found') {
+        console.error('💡 SOLUTION:');
+        console.error('1. Go to your bot in Telegram: https://t.me/' + (botInfo?.username || 'your_bot'));
+        console.error('2. Send /start command');
+        console.error('3. Get your chat ID with /chatid command');
+        console.error('4. Update TELEGRAM_CHAT_ID environment variable in Render');
+      }
     }
     return false;
   }
@@ -485,11 +538,29 @@ app.get('/api/health', (req, res) => {
   res.json({
     status: 'OK',
     timestamp: new Date().toISOString(),
-    version: '1.0.0',
     telegram: {
-      bot: !!bot,
-      chat_id: !!TELEGRAM_CHAT_ID
+      bot_configured: !!bot,
+      chat_id_configured: !!TELEGRAM_CHAT_ID,
+      bot_username: botInfo?.username || 'Not connected'
     }
+  });
+});
+
+// Новый endpoint для получения chat_id
+app.get('/api/get-chatid-instructions', (req, res) => {
+  const botUsername = botInfo?.username || 'YOUR_BOT_USERNAME';
+  
+  res.json({
+    instructions: [
+      `1. Go to your bot: https://t.me/${botUsername}`,
+      `2. Send /start command`,
+      `3. Send /chatid command to get your Chat ID`,
+      `4. Copy the numeric Chat ID`,
+      `5. Set environment variable in Render: TELEGRAM_CHAT_ID=your_chat_id`,
+      `6. Redeploy your application`
+    ],
+    current_chat_id: TELEGRAM_CHAT_ID || 'Not set',
+    bot_username: botUsername
   });
 });
 
@@ -498,7 +569,11 @@ app.post('/api/test-telegram', async (req, res) => {
   if (!bot || !TELEGRAM_CHAT_ID) {
     return res.status(400).json({ 
       success: false, 
-      error: 'Telegram not configured' 
+      error: 'Telegram not configured',
+      details: {
+        bot: !!bot,
+        chat_id: !!TELEGRAM_CHAT_ID
+      }
     });
   }
 
@@ -515,22 +590,32 @@ app.post('/api/test-telegram', async (req, res) => {
       rsi: 25,
       volatility: 5.5,
       change24h: 2.5,
-      confirmations: ['RSI_OVERSOLD', 'MACD_BULLISH', 'BB_OVERSOLD'],
+      confirmations: ['TEST_CONFIRMATION'],
       timestamp: new Date(),
       isGodTier: true,
       isPremium: false,
       exchange: 'BINANCE'
     };
 
+    console.log('🧪 Sending test message...');
     const success = await sendToTelegram(testMessage);
     
     if (success) {
-      res.json({ success: true, message: 'Test message sent to Telegram' });
+      res.json({ 
+        success: true, 
+        message: 'Test message sent successfully to Telegram!' 
+      });
     } else {
-      res.status(500).json({ success: false, error: 'Failed to send test message' });
+      res.status(500).json({ 
+        success: false, 
+        error: 'Failed to send test message - check logs for details' 
+      });
     }
   } catch (error) {
-    res.status(500).json({ success: false, error: error.message });
+    res.status(500).json({ 
+      success: false, 
+      error: error.message 
+    });
   }
 });
 
@@ -542,8 +627,10 @@ app.post('/api/webhook', async (req, res) => {
       return res.status(400).json({ error: 'Invalid signal data' });
     }
     
-    const newSignal = new Signal(signal);
-    await newSignal.save();
+    if (MONGODB_URI && MONGODB_URI !== 'mongodb://localhost:27017/byagent') {
+      const newSignal = new Signal(signal);
+      await newSignal.save();
+    }
     
     await sendToTelegram(signal);
     
@@ -566,32 +653,32 @@ async function executeCronTask() {
     
     console.log(`📊 Found ${signals.length} total signals`);
     
-    // Отправляем GOD TIER и PREMIUM сигналы
     const signalsToSend = signals.filter(s => s.isGodTier || s.isPremium);
-    console.log(`🎯 Filtered ${signalsToSend.length} signals to send (God Tier: ${signals.filter(s => s.isGodTier).length}, Premium: ${signals.filter(s => s.isPremium).length})`);
+    console.log(`🎯 Filtered ${signalsToSend.length} signals to send`);
     
     let sentCount = 0;
     
     for (const signal of signalsToSend) {
-      // Более простая проверка - только за последние 10 минут
       const tenMinutesAgo = new Date(Date.now() - 10 * 60 * 1000);
       
-      const existing = await Signal.findOne({
-        pair: signal.pair,
-        sentToTelegram: true,
-        timestamp: { $gte: tenMinutesAgo }
-      });
+      let existing = null;
+      if (MONGODB_URI && MONGODB_URI !== 'mongodb://localhost:27017/byagent') {
+        existing = await Signal.findOne({
+          pair: signal.pair,
+          sentToTelegram: true,
+          timestamp: { $gte: tenMinutesAgo }
+        });
+      }
       
       if (!existing) {
         console.log(`📨 Sending signal: ${signal.pair} (${signal.signal})`);
         const success = await sendToTelegram(signal);
         if (success) {
           sentCount++;
-          // Ждем между сообщениями
           await new Promise(resolve => setTimeout(resolve, 2000));
         }
       } else {
-        console.log(`⏭️  Signal already sent recently: ${signal.pair}`);
+        console.log(`⏭️  Signal already sent: ${signal.pair}`);
       }
     }
     
@@ -610,23 +697,24 @@ async function startServer() {
       await mongoose.connect(MONGODB_URI);
       console.log('✅ Connected to MongoDB');
     } else {
-      console.log('❌ MongoDB not connected - using in-memory storage only');
+      console.log('💡 MongoDB not connected - using in-memory storage');
     }
 
     // Запускаем сервер
     app.listen(PORT, '0.0.0.0', () => {
       console.log(`🚀 Server running on port ${PORT}`);
-      console.log(`📊 API available at http://localhost:${PORT}/api/signals`);
-      console.log(`🧪 Test Telegram: POST http://localhost:${PORT}/api/test-telegram`);
+      console.log(`📊 API: https://by-agent.onrender.com/api/signals`);
+      console.log(`🩺 Health: https://by-agent.onrender.com/api/health`);
+      console.log(`💡 Chat ID Instructions: https://by-agent.onrender.com/api/get-chatid-instructions`);
+      console.log(`🧪 Test Telegram: POST https://by-agent.onrender.com/api/test-telegram`);
     });
 
     // Запускаем крон-задачи
     cron.schedule('*/2 * * * *', executeCronTask);
     console.log('✅ Cron job scheduled every 2 minutes');
 
-    // Запускаем сразу при старте
-    console.log('🚀 Running initial signal generation...');
-    executeCronTask();
+    // Первый запуск
+    setTimeout(executeCronTask, 5000);
 
   } catch (error) {
     console.error('❌ Failed to start server:', error);
