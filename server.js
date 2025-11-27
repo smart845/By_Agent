@@ -505,7 +505,7 @@ ${direction} ${signal.pair}
       console.error('Telegram API Response:', error.response.data);
       
       // Specific error handling
-      if (error.response.data.description === 'Bad Request: chat not found') {
+      if (error.response && error.response.data && error.response.data.description === 'Bad Request: chat not found') {
         console.error('💡 SOLUTION:');
         console.error('1. Go to your bot in Telegram: https://t.me/' + (botInfo?.username || 'your_bot'));
         console.error('2. Send /start command');
