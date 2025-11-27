@@ -31,6 +31,29 @@ const COINGECKO_API_KEY = process.env.COINGECKO_API_KEY;
 // Initialize Telegram Bot
 const bot = TELEGRAM_BOT_TOKEN ? new Telegraf(TELEGRAM_BOT_TOKEN) : null;
 
+if (bot) {
+  console.log('Telegram bot initialized');
+} else {
+  console.log('Telegram bot NOT initialized, TELEGRAM_BOT_TOKEN is missing');
+}
+
+// === TELEGRAM WEBHOOK ROUTE ===
+// Webhook, который мы уже указали в Telegram:
+// https://by-agent.onrender.com/webhook
+if (bot) {
+  app.post('/webhook', (req, res) => {
+    console.log('Telegram update received:', req.body);
+    bot.handleUpdate(req.body);
+    res.sendStatus(200);
+  });
+
+  // Если хочешь, можно и отсюда выставлять webhook автоматически:
+  // const WEBHOOK_URL = process.env.TELEGRAM_WEBHOOK_URL || 'https://by-agent.onrender.com/webhook';
+  // bot.telegram.setWebhook(WEBHOOK_URL)
+  //   .then(() => console.log('Telegram webhook set to', WEBHOOK_URL))
+  //   .catch(err => console.error('Error setting webhook:', err));
+}
+
 // MongoDB Models
 const SignalSchema = new mongoose.Schema({
   pair: String,
@@ -479,11 +502,11 @@ async function startServer() {
       console.log(`📊 API available at http://localhost:${PORT}/api/signals`);
     });
 
-    // Запускаем бота
-    if (bot) {
-      await bot.launch();
-      console.log('Telegram bot started');
-    }
+    // ВАЖНО: bot.launch() больше не вызываем — работаем через webhook
+    // if (bot) {
+    //   await bot.launch();
+    //   console.log('Telegram bot started');
+    // }
 
     // Запускаем крон-задачи
     cron.schedule('*/2 * * * *', async () => {
