@@ -37,20 +37,12 @@ if (bot) {
 }
 
 // === TELEGRAM WEBHOOK ROUTE ===
-// Webhook, который мы уже указали в Telegram:
-// https://by-agent.onrender.com/webhook
 if (bot) {
   app.post('/webhook', (req, res) => {
     console.log('Telegram update received:', req.body);
     bot.handleUpdate(req.body);
     res.sendStatus(200);
   });
-
-  // Если хочешь, можно и отсюда выставлять webhook автоматически:
-  // const WEBHOOK_URL = process.env.TELEGRAM_WEBHOOK_URL || 'https://by-agent.onrender.com/webhook';
-  // bot.telegram.setWebhook(WEBHOOK_URL)
-  //   .then(() => console.log('Telegram webhook set to', WEBHOOK_URL))
-  //   .catch(err => console.error('Error setting webhook:', err));
 }
 
 // MongoDB Models
@@ -90,7 +82,7 @@ const TRADING_CONFIG = {
 
 const EXCHANGES = ['BINANCE', 'BYBIT', 'KUCOIN', 'OKX', 'GATE', 'MEXC', 'HUOBI', 'BITGET'];
 
-// Технические индикаторы (аналогично фронтенду)
+// Технические индикаторы
 function calculateSMA(prices, period) {
   if (prices.length < period) return null;
   const sum = prices.slice(-period).reduce((a, b) => a + b, 0);
@@ -459,20 +451,16 @@ app.get('/api/health', (req, res) => {
 });
 
 app.post('/api/webhook', async (req, res) => {
-  // Webhook для получения сигналов извне
   try {
     const signal = req.body;
     
-    // Валидация сигнала
     if (!signal.pair || !signal.signal) {
       return res.status(400).json({ error: 'Invalid signal data' });
     }
     
-    // Сохраняем сигнал в базу
     const newSignal = new Signal(signal);
     await newSignal.save();
     
-    // Отправляем в Telegram
     await sendToTelegram(signal);
     
     res.json({ success: true, message: 'Signal processed' });
@@ -485,6 +473,35 @@ app.post('/api/webhook', async (req, res) => {
 app.get('/', (req, res) => {
   res.sendFile(path.join(__dirname, 'index.html'));
 });
+
+// Функция для выполнения cron-задачи
+async function executeCronTask() {
+  console.log('🔄 Generating signals...');
+  try {
+    const signals = await generateSignals();
+    
+    // Отправляем только GOD TIER сигналы в Telegram
+    const godTierSignals = signals.filter(s => s.isGodTier);
+    
+    for (const signal of godTierSignals) {
+      // Проверяем, не отправляли ли мы уже этот сигнал
+      const existing = await Signal.findOne({
+        pair: signal.pair,
+        sentToTelegram: true,
+        timestamp: { $gte: new Date(Date.now() - 30 * 60 * 1000) }
+      });
+      
+      if (!existing) {
+        await sendToTelegram(signal);
+        await new Promise(resolve => setTimeout(resolve, 1000));
+      }
+    }
+    
+    console.log(`✅ Generated ${signals.length} signals, sent ${godTierSignals.length} to Telegram`);
+  } catch (error) {
+    console.error('❌ Error in cron job:', error);
+  }
+}
 
 // Запуск сервера
 async function startServer() {
@@ -501,41 +518,8 @@ async function startServer() {
       console.log(`📊 API available at http://localhost:${PORT}/api/signals`);
     });
 
-    // ВАЖНО: bot.launch() больше не вызываем — работаем через webhook
-    // if (bot) {
-    //   await bot.launch();
-    //   console.log('Telegram bot started');
-    // }
-
-    // Запускаем крон-задачи
-    cron.schedule('*/2 * * * *', async () => {
-      console.log('🔄 Generating signals...');
-      try {
-        const signals = await generateSignals();
-        
-        // Отправляем только GOD TIER сигналы в Telegram
-        const godTierSignals = signals.filter(s => s.isGodTier);
-        
-        for (const signal of godTierSignals) {
-          // Проверяем, не отправляли ли мы уже этот сигнал
-          const existing = await Signal.findOne({
-            pair: signal.pair,
-            sentToTelegram: true,
-            timestamp: { $gte: new Date(Date.now() - 30 * 60 * 1000) } // За последние 30 минут
-          });
-          
-          if (!existing) {
-            await sendToTelegram(signal);
-            // Ждем 1 секунду между сообщениями
-            await new Promise(resolve => setTimeout(resolve, 1000));
-          }
-        }
-        
-        console.log(`✅ Generated ${signals.length} signals, sent ${godTierSignals.length} to Telegram`);
-      } catch (error) {
-        console.error('❌ Error in cron job:', error);
-      }
-    });
+    // Запускаем крон-задачи (после объявления всех функций)
+    cron.schedule('*/2 * * * *', executeCronTask);
 
     console.log('✅ Cron jobs scheduled');
 
@@ -556,4 +540,3 @@ process.on('SIGTERM', async () => {
 });
 
 startServer();
-
