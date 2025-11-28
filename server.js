@@ -27,7 +27,8 @@ const COINGECKO_API_KEY = process.env.COINGECKO_API_KEY;
 // Debug environment variables
 console.log('=== ENV VARIABLES ===');
 console.log('TELEGRAM_BOT_TOKEN:', TELEGRAM_BOT_TOKEN ? `SET (length: ${TELEGRAM_BOT_TOKEN.length})` : 'MISSING');
-console.log('TELEGRAM_CHAT_ID:', TELEGRAM_CHAT_ID ? `"${TELEGRAM_CHAT_ID}"` : 'MISSING');
+// ИСПРАВЛЕНО: Убраны кавычки, которые вводили в заблуждение
+console.log('TELEGRAM_CHAT_ID:', TELEGRAM_CHAT_ID ? TELEGRAM_CHAT_ID : 'MISSING');
 console.log('MONGODB_URI:', MONGODB_URI ? 'SET' : 'MISSING');
 console.log('=====================');
 
@@ -437,8 +438,8 @@ async function sendToTelegram(signal) {
   }
 
   try {
-    // Проверяем валидность chat_id
-    const chatIdString = TELEGRAM_CHAT_ID.trim(); // Изменено имя переменной
+    // ИСПРАВЛЕНО: Более надежная обработка Chat ID
+    const chatIdString = TELEGRAM_CHAT_ID.trim();
     
     // Проверяем, что chat_id числовой (или строка с числом)
     if (!/^-?\d+$/.test(chatIdString)) {
@@ -447,7 +448,7 @@ async function sendToTelegram(signal) {
     }
     
     // Явно преобразуем в число для надежности
-    const chatId = parseInt(chatIdString, 10); // НОВАЯ СТРОКА
+    const chatId = parseInt(chatIdString, 10);
 
     const direction = signal.signal === 'LONG' ? '🟢 LONG' : '🔴 SHORT';
     const tier = signal.isGodTier ? '🔥 GOD TIER' : '⭐ PREMIUM';
