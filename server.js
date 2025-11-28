@@ -1,5 +1,3 @@
-
-pasted_content.txt
 import express from 'express';
 import cors from 'cors';
 import axios from 'axios';
@@ -308,9 +306,9 @@ function analyzeGodTierSignal(coinData, priceHistory = []) {
   if (williams < -80) { qualityScore += 1; confirmations.push('WILLIAMS_OVERSOLD'); }
   else if (williams > -20) { qualityScore += 1; confirmations.push('WILLIAMS_OVERBOUGHT'); }
   
-  if (sma20 > sma50 && ema12 > sma20) { 
+  if (sma20 > sma50) { 
     qualityScore += 1; confirmations.push('TREND_BULLISH'); 
-  } else if (sma20 < sma50 && ema12 < sma20) { 
+  } else if (sma20 < sma50) { 
     qualityScore += 1; confirmations.push('TREND_BEARISH'); 
   }
   
@@ -440,13 +438,16 @@ async function sendToTelegram(signal) {
 
   try {
     // Проверяем валидность chat_id
-    const chatId = TELEGRAM_CHAT_ID.trim();
+    const chatIdString = TELEGRAM_CHAT_ID.trim(); // Изменено имя переменной
     
     // Проверяем, что chat_id числовой (или строка с числом)
-    if (!/^-?\d+$/.test(chatId)) {
-      console.error(`❌ Invalid TELEGRAM_CHAT_ID format: "${chatId}" - must be numeric`);
+    if (!/^-?\d+$/.test(chatIdString)) {
+      console.error(`❌ Invalid TELEGRAM_CHAT_ID format: "${chatIdString}" - must be numeric`);
       return false;
     }
+    
+    // Явно преобразуем в число для надежности
+    const chatId = parseInt(chatIdString, 10); // НОВАЯ СТРОКА
 
     const direction = signal.signal === 'LONG' ? '🟢 LONG' : '🔴 SHORT';
     const tier = signal.isGodTier ? '🔥 GOD TIER' : '⭐ PREMIUM';
