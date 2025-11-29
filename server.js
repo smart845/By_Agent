@@ -133,14 +133,14 @@ const TRADING_CONFIG = {
   baseUrl: 'https://api.coingecko.com/api/v3',
   vsCurrency: 'usd',
   topCoinsCount: 100,
-  minVolume: 50000000,        // Снижено с 100M до 50M
-  minMarketCap: 500000000,    // Снижено с 2B до 500M
-  minRRRatio: 2.5,            // Снижено с 4.5 до 2.5 (более реалистично)
+  minVolume: 100000000,
+  minMarketCap: 2000000000,
+  minRRRatio: 4.5,
   targetWinRate: 0.3,
-  minConfidence: 65,          // Снижено с 85 до 65
-  maxVolatility: 25,          // Увеличено с 20 до 25
-  minQualityScore: 5,         // Снижено с 7 до 5
-  requiredConfirmations: 2,   // Снижено с 4 до 2
+  minConfidence: 85,
+  maxVolatility: 20,
+  minQualityScore: 7,
+  requiredConfirmations: 4,
 };
 
 const EXCHANGES = [
@@ -370,31 +370,28 @@ function analyzeGodTierSignal(coinData, priceHistory = []) {
   let signal = null;
   let confidence = 0;
 
-  // Более гибкие условия для LONG
   if (
-    (rsi < 30 && macd.histogram > 0) ||
-    (currentPrice < bb.lower && stoch.k < 30) ||
-    (rsi < 35 && stoch.k < 25 && macd.macd > macd.signal)
+    rsi < 25 &&
+    macd.histogram > 0 &&
+    currentPrice < bb.lower &&
+    stoch.k < 20
   ) {
-    const trendStrength = sma20 > sma50 ? 1.2 : 1.0;
-    const baseConfidence = 60 + (30 - rsi) * 1.5;
+    const trendStrength = sma20 > sma50 ? 1.3 : 0.9;
     confidence = Math.min(
-      baseConfidence * trendStrength + confirmations.length * 3,
-      95
+      85 + (25 - rsi) * 2.5 * trendStrength,
+      98
     );
     signal = 'LONG';
-  }
-  // Более гибкие условия для SHORT
-  else if (
-    (rsi > 70 && macd.histogram < 0) ||
-    (currentPrice > bb.upper && stoch.k > 70) ||
-    (rsi > 65 && stoch.k > 75 && macd.macd < macd.signal)
+  } else if (
+    rsi > 75 &&
+    macd.histogram < 0 &&
+    currentPrice > bb.upper &&
+    stoch.k > 80
   ) {
-    const trendStrength = sma20 < sma50 ? 1.2 : 1.0;
-    const baseConfidence = 60 + (rsi - 70) * 1.5;
+    const trendStrength = sma20 < sma50 ? 1.3 : 0.9;
     confidence = Math.min(
-      baseConfidence * trendStrength + confirmations.length * 3,
-      95
+      85 + (rsi - 75) * 2.5 * trendStrength,
+      98
     );
     signal = 'SHORT';
   }
@@ -423,9 +420,8 @@ function analyzeGodTierSignal(coinData, priceHistory = []) {
 
   if (rrRatio < TRADING_CONFIG.minRRRatio) return null;
 
-  // Более реалистичные критерии для GOD TIER
   const isGodTier =
-    qualityScore >= 7 && confidence >= 80 && rrRatio >= 3.5;
+    qualityScore >= 9 && confidence >= 90 && rrRatio >= 5.0;
 
   return {
     pair: `${coinData.symbol.toUpperCase()}/USDT`,
@@ -450,9 +446,9 @@ function analyzeGodTierSignal(coinData, priceHistory = []) {
     isGodTier,
     isPremium:
       !isGodTier &&
-      qualityScore >= 5 &&
-      confidence >= 65 &&
-      rrRatio >= 2.5,
+      qualityScore >= 7 &&
+      confidence >= 85 &&
+      rrRatio >= 4.5,
   };
 }
 
@@ -756,14 +752,6 @@ async function executeCronTask() {
     const signals = await generateSignals();
 
     console.log(`📊 [CRON] Found ${signals.length} total signals`);
-    
-    // Детальное логирование
-    if (signals.length > 0) {
-      console.log('📋 [CRON] Signal details:');
-      signals.forEach((s, i) => {
-        console.log(`  ${i+1}. ${s.pair}: ${s.signal}, Q=${s.qualityScore}, C=${s.confidence}%, RR=${s.rrRatio}, GOD=${s.isGodTier}, PREM=${s.isPremium}`);
-      });
-    }
 
     const signalsToSend = signals.filter(
       (s) => s.isGodTier || s.isPremium
