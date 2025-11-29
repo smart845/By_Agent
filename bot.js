@@ -510,7 +510,7 @@ async function runSignalsTask() {
     }
     
     // Отправляем максимум 5 лучших сигналов
-    const signalsToSend = signals.slice(0, 5);
+    const signalsToSend = signals;
     console.log(`📤 Отправка ${signalsToSend.length} сигналов...`);
     
     for (const signal of signalsToSend) {
