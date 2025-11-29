@@ -7,6 +7,13 @@ import cron from "node-cron";
 const BOT_TOKEN = process.env.TELEGRAM_BOT_TOKEN;
 const CHAT_ID = process.env.TELEGRAM_CHAT_ID;
 
+// Опционально: прокси. Можно задать ЛЮБОЕ из этих env:
+const PROXY_URL =
+  process.env.PROXY_URL ||
+  process.env.HTTP_PROXY ||
+  process.env.HTTPS_PROXY ||
+  null;
+
 if (!BOT_TOKEN) {
   console.error("❌ TELEGRAM_BOT_TOKEN не установлен!");
   process.exit(1);
@@ -61,9 +68,36 @@ const AXIOS_CONFIG = {
     "Cache-Control": "no-cache",
     Pragma: "no-cache",
   },
-  // принимать любой статус, обработаем сами
+  // принимаем любой статус, обрабатываем сами
   validateStatus: () => true,
 };
+
+// если задан PROXY_URL — включаем прокси в axios
+if (PROXY_URL) {
+  try {
+    const url = new URL(PROXY_URL);
+    AXIOS_CONFIG.proxy = {
+      host: url.hostname,
+      port: Number(url.port) || 80,
+    };
+    if (url.username || url.password) {
+      AXIOS_CONFIG.proxy.auth = {
+        username: decodeURIComponent(url.username),
+        password: decodeURIComponent(url.password),
+      };
+    }
+    console.log(
+      `🌐 Прокси включен: ${AXIOS_CONFIG.proxy.host}:${AXIOS_CONFIG.proxy.port}`
+    );
+  } catch (e) {
+    console.error(
+      "⚠️ Неверный формат PROXY_URL/HTTP_PROXY/HTTPS_PROXY, прокси отключен:",
+      e.message
+    );
+  }
+} else {
+  console.log("ℹ️ Прокси не настроен, запросы идут напрямую");
+}
 
 // ==================== TELEGRAM BOT ====================
 
@@ -136,12 +170,12 @@ async function fetchFromBinance() {
       const res = await axios.get(url, AXIOS_CONFIG);
 
       if (!res || !Array.isArray(res.data)) {
-        console.warn(`⚠️ Binance fallback failed: bad data from ${url}`);
+        console.warn(`⚠️ Binance: странный ответ от ${url}`);
         continue;
       }
 
       if (res.status >= 400) {
-        console.warn(`⚠️ Binance ${url} returned error ${res.status}`);
+        console.warn(`⚠️ Binance endpoint ${url} вернул ${res.status}`);
         continue;
       }
 
@@ -168,7 +202,7 @@ async function fetchFromBinance() {
     }
   }
 
-  console.error("❌ Binance: all fallback endpoints failed.");
+  console.error("❌ Binance: все fallback endpoint'ы не дали данных.");
   return [];
 }
 
@@ -178,7 +212,7 @@ async function fetchFromBybit() {
 
   const endpoints = [
     "https://api.bybit.com/v5/market/tickers?category=spot",
-    "https://public.bybit.com/spot/quote/ticker/24hr", // fallback
+    "https://public.bybit.com/spot/quote/ticker/24hr",
   ];
 
   for (let url of endpoints) {
@@ -186,7 +220,7 @@ async function fetchFromBybit() {
       const res = await axios.get(url, AXIOS_CONFIG);
 
       if (res.status === 403 || res.status === 429) {
-        console.warn("⚠️ Bybit blocked (403/429), trying next endpoint...");
+        console.warn("⚠️ Bybit заблокировал запрос (403/429), пробуем другой endpoint...");
         continue;
       }
 
@@ -201,7 +235,7 @@ async function fetchFromBybit() {
       } else if (Array.isArray(res.data)) {
         list = res.data;
       } else {
-        console.warn("⚠️ Bybit bad data format");
+        console.warn("⚠️ Bybit: неожиданный формат данных");
         continue;
       }
 
@@ -244,7 +278,7 @@ async function fetchFromBybit() {
     }
   }
 
-  console.error("❌ Bybit: all fallback endpoints failed.");
+  console.error("❌ Bybit: все endpoint'ы не дали данных.");
   return [];
 }
 
@@ -445,7 +479,7 @@ function buildSignalFromTicker(ticker) {
     confirmations.push("TOP_EXCHANGE");
   }
 
-  // псевдо-RSI для визуала
+  // псевдо-RSI
   let rsi = 50 + Math.max(-40, Math.min(40, change24h));
   rsi = Math.round(Math.max(0, Math.min(100, rsi)));
 
