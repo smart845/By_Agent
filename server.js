@@ -1,4 +1,4 @@
-// index.mjs
+// server.js
 // ================== ИМПОРТЫ ==================
 import express from 'express';
 import cors from 'cors';
@@ -13,7 +13,11 @@ import { fileURLToPath } from 'url';
 const __filename = fileURLToPath(import.meta.url);
 const __dirname = path.dirname(__filename);
 
+console.log('BOOT: server.js starting...');
+
 const app = express();
+
+// PORT — ОБЯЗАТЕЛЬНО берем из ENV (Render сам его задаёт)
 const PORT = process.env.PORT || 3000;
 
 // ================== MIDDLEWARE ==================
@@ -41,6 +45,7 @@ console.log(
 );
 console.log('TELEGRAM_CHAT_ID:', TELEGRAM_CHAT_ID || 'MISSING');
 console.log('MONGODB_URI:', MONGODB_URI ? 'SET' : 'MISSING');
+console.log('PORT:', PORT);
 console.log('=====================');
 
 // ================== TELEGRAM BOT ==================
@@ -563,7 +568,7 @@ ${direction} ${signal.pair}
       `✅ [${source}] Signal sent to Telegram! Message ID: ${sentMessage.message_id}`
     );
 
-    // Сохраняем в базу
+    // Сохраняем в базу (если настроен внешний Mongo)
     if (MONGODB_URI && MONGODB_URI !== 'mongodb://localhost:27017/byagent') {
       await Signal.findOneAndUpdate(
         {
@@ -708,7 +713,7 @@ app.post('/api/test-telegram', async (req, res) => {
   }
 });
 
-// Webhook для внешних сигналов (твои сторонние приложения могут дергать этот endpoint)
+// Webhook для внешних сигналов — сюда твое приложение шлёт сигналы
 app.post('/api/webhook', async (req, res) => {
   try {
     const signal = req.body;
@@ -800,37 +805,36 @@ async function executeCronTask() {
 
 // ================== START SERVER ==================
 async function startServer() {
+  // 1) СНАЧАЛА запускаем HTTP-сервер, чтобы Render видел открытый порт
+  app.listen(PORT, '0.0.0.0', () => {
+    console.log(`🚀 Server running on port ${PORT}`);
+    console.log(`📊 API: /api/signals`);
+    console.log(`🩺 Health: /api/health`);
+    console.log(`💡 Chat ID Instructions: /api/get-chatid-instructions`);
+    console.log(`🧪 Test Telegram: POST /api/test-telegram`);
+  });
+
+  // 2) Подключаем Mongo НЕ фатально
   try {
-    // Mongo
     if (MONGODB_URI && MONGODB_URI !== 'mongodb://localhost:27017/byagent') {
       await mongoose.connect(MONGODB_URI);
       console.log('✅ Connected to MongoDB');
     } else {
-      console.log('💡 MongoDB not connected - using in-memory storage');
+      console.log('💡 MongoDB not connected - using in-memory mode');
     }
-
-    // Telegram bot
-    await initTelegramBot();
-
-    // HTTP server
-    app.listen(PORT, '0.0.0.0', () => {
-      console.log(`🚀 Server running on port ${PORT}`);
-      console.log(`📊 API: /api/signals`);
-      console.log(`🩺 Health: /api/health`);
-      console.log(`💡 Chat ID Instructions: /api/get-chatid-instructions`);
-      console.log(`🧪 Test Telegram: POST /api/test-telegram`);
-    });
-
-    // CRON каждые 2 минуты
-    cron.schedule('*/2 * * * *', executeCronTask);
-    console.log('✅ Cron job scheduled every 2 minutes');
-
-    // Первый запуск через 5 сек
-    setTimeout(executeCronTask, 5000);
-  } catch (error) {
-    console.error('❌ Failed to start server:', error);
-    process.exit(1);
+  } catch (err) {
+    console.error('❌ MongoDB connection failed, continuing without DB:', err.message);
   }
+
+  // 3) Telegram бот
+  await initTelegramBot();
+
+  // 4) Cron каждые 2 минуты
+  cron.schedule('*/2 * * * *', executeCronTask);
+  console.log('✅ Cron job scheduled every 2 minutes');
+
+  // Первый запуск через 5 сек
+  setTimeout(executeCronTask, 5000);
 }
 
 // ================== GRACEFUL SHUTDOWN ==================
