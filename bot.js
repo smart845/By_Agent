@@ -510,13 +510,13 @@ async function runSignalsTask() {
     }
     
     // Отправляем максимум 5 лучших сигналов
-    const signalsToSend = signals.slice(0, 5);
+    const signalsToSend = signals;
     console.log(`📤 Отправка ${signalsToSend.length} сигналов...`);
     
     for (const signal of signalsToSend) {
       await sendSignalToTelegram(signal);
       // Задержка между сообщениями
-      await new Promise(resolve => setTimeout(resolve, 2000));
+      await new Promise(resolve => setTimeout(resolve, 700));
     }
     
     console.log('✅ Задача завершена\n');
