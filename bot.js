@@ -41,6 +41,8 @@ const CONFIG = {
     rrRatio: 2.0
   }
 };
+// ==================== ИСКЛЮЧЕНИЯ ====================
+const STABLECOINS = ['usdt', 'usdc', 'dai', 'busd', 'tusd', 'usdp', 'frax', 'ustc', 'eurs'];
 
 // ==================== TELEGRAM BOT ====================
 const bot = new Telegraf(BOT_TOKEN);
