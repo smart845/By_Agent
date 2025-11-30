@@ -43,7 +43,7 @@ const CONFIG = {
 };
 
 // ==================== ИСКЛЮЧЕНИЯ ====================
-const STABLECOINS = ['usdt', 'usdc', 'usdc.e', 'dai', 'busd', 'tusd', 'usdp', 'frax', 'ustc', 'eurs'];
+const STABLECOINS = ['usdt', 'usdc', 'dai', 'busd', 'tusd', 'usdp', 'frax', 'ustc', 'eurs'];
 
 // ==================== TELEGRAM BOT ====================
 const bot = new Telegraf(BOT_TOKEN );
@@ -611,7 +611,7 @@ async function generateSignals() {
   return signals;
 }
 
-// ==================== ОТПРАВКА В TELEGRAM (УЛУЧШЕННЫЙ ФОРМАТ) ====================
+// ==================== ОТПРАВКА В TELEGRAM (ОБНОВЛЕННЫЙ ФОРМАТ) ====================
 async function sendSignalToTelegram(signal) {
   if (!CHAT_ID) {
     console.log('⚠️ CHAT_ID не установлен. Сигнал не отправлен.');
@@ -619,98 +619,51 @@ async function sendSignalToTelegram(signal) {
   }
   
   try {
-    const tierEmoji = signal.tier === 'GOD TIER' ? '🔥' : '⭐';
+    const tierEmoji = signal.tier === 'GOD TIER' ? '🔥' : '🟦';
+    const tierText = signal.tier === 'GOD TIER' ? 'GOD TIER SIGNAL' : 'PREMIUM SIGNAL';
     
-    // Расчет зоны входа (диапазон)
-    const entryLow = signal.entry * 0.998;
-    const entryHigh = signal.entry * 1.002;
+    // Эмодзи для направления сигнала
+    const directionEmoji = signal.signal === 'LONG' ? '🟢' : '🔴';
     
-    // Расчет 3 уровней тейк-профита
-    let tp1, tp2, tp3;
-    if (signal.signal === 'LONG') {
-      tp1 = signal.entry + (signal.tp - signal.entry) * 0.4;
-      tp2 = signal.entry + (signal.tp - signal.entry) * 0.7;
-      tp3 = signal.tp;
-    } else {
-      tp1 = signal.entry - (signal.entry - signal.tp) * 0.4;
-      tp2 = signal.entry - (signal.entry - signal.tp) * 0.7;
-      tp3 = signal.tp;
-    }
+    // Форматирование даты и времени
+    const timestamp = signal.timestamp.toLocaleString('ru-RU', {
+      day: '2-digit',
+      month: '2-digit',
+      year: 'numeric',
+      hour: '2-digit',
+      minute: '2-digit',
+      second: '2-digit'
+    }).replace(',', ' —');
     
     // Генерация комментария
     const comment = generateTraderComment(signal);
     
-    // Описание стоп-лосса
-    const slDescription = signal.liquidityZoneUsed 
-      ? `ниже ${signal.sl.toFixed(6)} (за зоной ликвидности)`
-      : `ниже ${signal.sl.toFixed(6)}`;
-    
-    const slDescriptionShort = signal.liquidityZoneUsed
-      ? `выше ${signal.sl.toFixed(6)} (за зоной ликвидности)`
-      : `выше ${signal.sl.toFixed(6)}`;
-    
-    // Проверка EMA выравнивания
-    let emaStatus = '';
-    if (signal.confirmations.includes('EMA_BULLISH_ALIGNMENT')) {
-      emaStatus = 'EMA20 > EMA50 > EMA100, импульс вверх';
-    } else if (signal.confirmations.includes('EMA_BEARISH_ALIGNMENT')) {
-      emaStatus = 'EMA20 < EMA50 < EMA100, импульс вниз';
-    } else {
-      emaStatus = 'Смешанное выравнивание EMA';
-    }
-    
-    // Статус RSI
-    let rsiStatus = '';
-    if (signal.indicators.rsi < 30) {
-      rsiStatus = `${signal.indicators.rsi} (выход из перепроданности)`;
-    } else if (signal.indicators.rsi > 70) {
-      rsiStatus = `${signal.indicators.rsi} (выход из перекупленности)`;
-    } else {
-      rsiStatus = `${signal.indicators.rsi}`;
-    }
-    
-    // Объёмы
-    const volumeStatus = signal.confirmations.includes('HIGH_VOLUME') 
-      ? 'выше среднего' 
-      : 'стандартные';
-    
-    // MACD статус
-    let macdStatus = '';
-    if (signal.confirmations.includes('MACD_BULLISH')) {
-      macdStatus = 'пересёк нулевую линию вверх';
-    } else if (signal.confirmations.includes('MACD_BEARISH')) {
-      macdStatus = 'пересёк нулевую линию вниз';
-    } else {
-      macdStatus = 'нейтральный';
-    }
-    
     const message = `
-<code>┌─────────────────────┐
-│ ${tierEmoji} ${signal.tier === 'GOD TIER' ? 'GOD TIER' : 'PREMIUM'} SIGNAL     │
-│ ${signal.signal === 'LONG' ? '🟢' : '🔴'} ${signal.signal} ${signal.pair}${' '.repeat(Math.max(0, 10 - signal.pair.length))}│
-└─────────────────────┘</code>
+<b>${tierEmoji}═══════════ ${tierText} ═══════════${tierEmoji}</b>
 
-💵 <b>Entry:</b> $${entryLow.toFixed(2)}–$${entryHigh.toFixed(2)}
-🎯 <b>Take Profit:</b>
-   • TP1: $${tp1.toFixed(2)}
-   • TP2: $${tp2.toFixed(2)}
-   • TP3: $${tp3.toFixed(2)}
-🛑 <b>Stop Loss:</b> $${signal.sl.toFixed(2)}${signal.liquidityZoneUsed ? ' (за зоной ликвидности)' : ''}
+${directionEmoji} <b>${signal.signal} ${signal.pair}</b>
 
-📊 <b>R:R Ratio:</b> 1:${signal.rrRatio}
-🎲 <b>Confidence:</b> ${signal.confidence}%
+💵 <b>Entry:</b> ${signal.entry.toFixed(6)}
+🎯 <b>Take Profit:</b> ${signal.tp.toFixed(6)}
+🛑 <b>Stop Loss:</b> ${signal.sl.toFixed(6)}
+
+🎲 <b>R:R Ratio:</b> 1:${signal.rrRatio.toFixed(1)}
+📊 <b>Confidence:</b> ${signal.confidence}%
 🏆 <b>Quality:</b> ${signal.qualityScore}/10
 
-📈 RSI: ${signal.indicators.rsi}${signal.indicators.rsi < 30 ? ' (выход из перепроданности)' : signal.indicators.rsi > 70 ? ' (выход из перекупленности)' : ''} | Stoch K: ${signal.indicators.stochK}
-📊 Volatility: ${signal.indicators.volatility}% | ADX: ${signal.indicators.adx}
-🔧 ATR: ${signal.indicators.atr}
+📉 <b>RSI:</b> ${signal.indicators.rsi}
+📈 <b>Stoch K:</b> ${signal.indicators.stochK}
+🌪 <b>Volatility:</b> ${signal.indicators.volatility}%
+📡 <b>ADX:</b> ${signal.indicators.adx}
+📏 <b>ATR:</b> ${signal.indicators.atr.toFixed(6)}
 
 🔍 <b>Confirmations:</b>
-${signal.confirmations.map(c => `• ${c}`).join('\n')}
+${signal.confirmations.map(conf => `• ${conf}`).join('\n')}
 
-💬 ${comment}
+💬 <b>Comment:</b> <i>${comment}</i>
 
-🏦 ${signal.exchange} | ⏰ ${signal.timestamp.toLocaleString('ru-RU', { hour: '2-digit', minute: '2-digit' })}
+🏦 <b>Exchange:</b> ${signal.exchange}
+⏱ <b>${timestamp}</b>
     `.trim();
     
     await bot.telegram.sendMessage(CHAT_ID, message, { parse_mode: 'HTML' });
