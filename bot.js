@@ -20,7 +20,7 @@ console.log('🔑 CoinGecko API Key:', COINGECKO_API_KEY ? 'УСТАНОВЛЕН
 const CONFIG = {
   // CoinGecko API
   apiUrl: 'https://api.coingecko.com/api/v3',
-  topCoins: 250,
+  topCoins: 500,
   
   // Фильтры
   minVolume: 30000000,        // $30M минимальный объем
