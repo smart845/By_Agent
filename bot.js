@@ -183,6 +183,10 @@ function analyzeSignal(coin, priceHistory) {
   const price = coin.current_price;
   const volume = coin.total_volume;
   const marketCap = coin.market_cap;
+  // НОВЫЙ ФИЛЬТР: Исключаем стейблкоины
+  if (STABLECOINS.includes(coin.symbol.toLowerCase())) {
+    return null;
+  }
   
   // Фильтры
   if (volume < CONFIG.minVolume) return null;
