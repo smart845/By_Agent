@@ -16,43 +16,39 @@ console.log('✅ Bot token найден');
 console.log('📱 Chat ID:', CHAT_ID || 'НЕ УСТАНОВЛЕН (получите через /chatid)');
 console.log('🔑 CoinGecko API Key:', COINGECKO_API_KEY ? 'УСТАНОВЛЕН' : 'НЕ УСТАНОВЛЕН (работает без ключа, но с лимитами)');
 
-// ==================== НАСТРОЙКИ ТОРГОВЛИ (ОПТИМИЗИРОВАНО ДЛЯ ВЫСОКОГО RR) ====================
+// ==================== НАСТРОЙКИ ТОРГОВЛИ (ОПТИМИЗИРОВАНО ДЛЯ СКАЛЬПИНГА) ====================
 const CONFIG = {
   // CoinGecko API
   apiUrl: 'https://api.coingecko.com/api/v3',
-  topCoins: 250,
+  topCoins: 250,                // УВЕЛИЧЕНО: Сканируем топ-250 монет
   
   // Фильтры
-  minVolume: 30000000,
-  minMarketCap: 300000000,
-  minConfidence: 65,
-  minQualityScore: 7,
-  minRRRatio: 4.0,  // УВЕЛИЧЕНО ДО 1:4
+  minVolume: 30000000,        // $30M минимальный объем
+  minMarketCap: 300000000,    // $300M минимальная капитализация
+  minConfidence: 60,          // 60% минимальная уверенность
+  minQualityScore: 6,         // УВЕЛИЧЕНО: 6/10 минимальное качество
+  minRRRatio: 3.0,            // УВЕЛИЧЕНО: 1:3 минимальное соотношение риск/прибыль
   
   // Критерии уровней
   godTier: {
-    qualityScore: 9,
-    confidence: 85,
-    rrRatio: 5.0
-  },
-  premium: {
-    qualityScore: 7,
-    confidence: 65,
+    qualityScore: 8,
+    confidence: 80,
     rrRatio: 4.0
   },
-  
-  // Уровни тейк-профита
-  takeProfitLevels: [1.0, 0.5, 0.3], // 100%, 50%, 30% позиции
-  tpMultipliers: [4.0, 2.5, 1.5]    // TP1: RR4, TP2: RR2.5, TP3: RR1.5
+  premium: {
+    qualityScore: 6,
+    confidence: 60,
+    rrRatio: 3.0
+  }
 };
 
 // ==================== ИСКЛЮЧЕНИЯ ====================
 const STABLECOINS = ['usdt', 'usdc', 'usdc.e','dai', 'busd', 'tusd', 'usdp', 'frax', 'ustc', 'eurs'];
 
 // ==================== TELEGRAM BOT ====================
-const bot = new Telegraf(BOT_TOKEN);
+const bot = new Telegraf(BOT_TOKEN );
 
-// [Остальные команды бота остаются без изменений...]
+// Команда /start
 bot.start((ctx) => {
   const chatId = ctx.chat.id;
   const username = ctx.chat.username ? `@${ctx.chat.username}` : 'Нет username';
@@ -71,6 +67,7 @@ bot.start((ctx) => {
   );
 });
 
+// Команда /chatid
 bot.command('chatid', (ctx) => {
   const chatId = ctx.chat.id;
   console.log(`💬 /chatid от chat ID: ${chatId}`);
@@ -82,7 +79,41 @@ bot.command('chatid', (ctx) => {
   );
 });
 
-// ==================== УЛУЧШЕННЫЕ ИНДИКАТОРЫ ====================
+// Команда /test - тестовый сигнал
+bot.command('test', async (ctx) => {
+  console.log('🧪 Отправка тестового сигнала...');
+  
+  const testSignal = {
+    pair: 'BTC/USDT',
+    signal: 'LONG',
+    entry: 45000,
+    tp: 48000,
+    sl: 43500,
+    confidence: 85,
+    qualityScore: 8,
+    rrRatio: 3.5,
+    tier: 'GOD TIER',
+    exchange: 'BINANCE',
+    indicators: {
+      rsi: 28,
+      volatility: 5.2,
+      stochK: 25,
+      adx: 35,
+      atr: 0.015,
+      ema20: 44800,
+      ema50: 44500,
+      ema100: 44000
+    },
+    confirmations: ['RSI_OVERSOLD', 'MACD_BULLISH', 'BB_OVERSOLD', 'EMA_BULLISH_ALIGNMENT', 'HIGH_VOLUME'],
+    liquidityZoneUsed: true,
+    timestamp: new Date()
+  };
+  
+  await sendSignalToTelegram(testSignal);
+  ctx.reply('✅ Тестовый сигнал отправлен!');
+});
+
+// ==================== ИНДИКАТОРЫ ====================
 function calculateSMA(prices, period) {
   if (prices.length < period) return null;
   const sum = prices.slice(-period).reduce((a, b) => a + b, 0);
@@ -100,7 +131,7 @@ function calculateEMA(prices, period) {
   return ema;
 }
 
-function calculateRSI(prices, period = 9) {
+function calculateRSI(prices, period = 9) { // УСКОРЕНО: 14 -> 9
   if (prices.length < period + 1) return 50;
   
   let gains = 0;
@@ -132,7 +163,7 @@ function calculateMACD(prices) {
   return { macd, signal, histogram };
 }
 
-function calculateBollingerBands(prices, period = 12) {
+function calculateBollingerBands(prices, period = 12) { // УСКОРЕНО: 20 -> 12
   if (prices.length < period) return { upper: null, middle: null, lower: null };
   
   const sma = calculateSMA(prices, period);
@@ -147,7 +178,7 @@ function calculateBollingerBands(prices, period = 12) {
   };
 }
 
-function calculateVolatility(prices, period = 12) {
+function calculateVolatility(prices, period = 12) { // УСКОРЕНО: 20 -> 12
   if (prices.length < period) return 0;
   
   const recentPrices = prices.slice(-period);
@@ -156,6 +187,7 @@ function calculateVolatility(prices, period = 12) {
   return (Math.sqrt(variance) / mean) * 100;
 }
 
+// НОВЫЙ ИНДИКАТОР: Стохастический осциллятор
 function calculateStochastic(prices, period = 14) {
   if (prices.length < period) return { k: 50 };
 
@@ -165,12 +197,15 @@ function calculateStochastic(prices, period = 14) {
 
   if (high === low) return { k: 50 };
   
+  // %K (Fast Stochastic)
   const k = ((currentPrice - low) / (high - low)) * 100;
+
   return { k: parseFloat(k.toFixed(2)) };
 }
 
+// НОВЫЙ ИНДИКАТОР: Average True Range (ATR)
 function calculateATR(prices, period = 14) {
-  if (prices.length < period) return 0.01;
+  if (prices.length < period) return 0.01; 
 
   let trs = [];
   for (let i = 1; i < prices.length; i++) {
@@ -181,18 +216,20 @@ function calculateATR(prices, period = 14) {
     trs.push(tr);
   }
   
+  // Упрощенный расчет ATR (среднее значение TR)
   const atr = trs.slice(-period).reduce((a, b) => a + b, 0) / period;
   return atr;
 }
 
+// НОВЫЙ ИНДИКАТОР: Упрощенный ADX (для фильтрации силы тренда)
 function calculateADX(prices, period = 14) {
   if (prices.length < period * 2) return 20; 
   const volatility = calculateVolatility(prices, period);
-  return Math.min(50, volatility * 5);
+  return Math.min(50, volatility * 5); 
 }
 
-// ==================== РАСШИРЕННЫЙ АНАЛИЗ ЗОН ЛИКВИДНОСТИ ====================
-function findLiquidityZones(prices, period = 25) {
+// ==================== ЗОНЫ ЛИКВИДНОСТИ ====================
+function findLiquidityZones(prices, period = 20) {
   const zones = [];
   
   for (let i = period; i < prices.length - period; i++) {
@@ -203,35 +240,25 @@ function findLiquidityZones(prices, period = 25) {
     // Локальный максимум (зона сопротивления)
     const isLocalMax = leftSlice.every(p => p <= price) && rightSlice.every(p => p <= price);
     if (isLocalMax) {
-      const volume = Math.abs(prices[i+1] - prices[i-1]);
-      zones.push({ 
-        type: 'resistance', 
-        price, 
-        strength: 1 + (volume * 0.1),
-        volume: volume
-      });
+      zones.push({ type: 'resistance', price, strength: 1 });
     }
     
     // Локальный минимум (зона поддержки)
     const isLocalMin = leftSlice.every(p => p >= price) && rightSlice.every(p => p >= price);
     if (isLocalMin) {
-      const volume = Math.abs(prices[i+1] - prices[i-1]);
-      zones.push({ 
-        type: 'support', 
-        price, 
-        strength: 1 + (volume * 0.1),
-        volume: volume
-      });
+      zones.push({ type: 'support', price, strength: 1 });
     }
   }
   
   return zones;
 }
 
+// Найти ближайшую зону ликвидности
 function findNearestLiquidityZone(currentPrice, zones, type) {
   const relevantZones = zones.filter(z => z.type === type);
   if (relevantZones.length === 0) return null;
   
+  // Сортируем по близости к текущей цене
   relevantZones.sort((a, b) => {
     return Math.abs(a.price - currentPrice) - Math.abs(b.price - currentPrice);
   });
@@ -239,307 +266,247 @@ function findNearestLiquidityZone(currentPrice, zones, type) {
   return relevantZones[0];
 }
 
-// ==================== ПРОФЕССИОНАЛЬНЫЕ КОММЕНТАРИИ ====================
-function generateProfessionalComment(signal) {
+// ==================== ГЕНЕРАЦИЯ КОММЕНТАРИЕВ ====================
+function generateTraderComment(signal) {
   const comments = [];
   const rsi = signal.indicators.rsi;
-  const stoch = signal.indicators.stochK;
   const adx = signal.indicators.adx;
-  const volatility = signal.indicators.volatility;
-  const atr = signal.indicators.atr;
   const confidence = signal.confidence;
-
-  // Анализ силы сигнала
+  
+  // Комментарии по уверенности
   if (confidence >= 85) {
-    comments.push('🔥 СИЛЬНЫЙ СЕТАП: Мультитаймфреймное подтверждение');
+    comments.push('Сильный сетап, все индикаторы подтверждают.');
   } else if (confidence >= 70) {
-    comments.push('📈 ХОРОШИЙ СЕТАП: Четкие уровни и подтверждения');
-  } else {
-    comments.push('⚠️ УМЕРЕННЫЙ СЕТАП: Требует осторожного управления');
+    comments.push('Хороший сетап с множественными подтверждениями.');
+  } else if (confidence < 65) {
+    comments.push('Сигнал слабый, ждём подтверждения объёма.');
   }
-
-  // Анализ перепроданности/перекупленности
-  if (rsi < 25 && stoch < 20) {
-    comments.push('📉 ЭКСТРЕМАЛЬНАЯ ПЕРЕПРОДАННОСТЬ: Высокая вероятность отскока');
-  } else if (rsi > 75 && stoch > 80) {
-    comments.push('📈 ЭКСТРЕМАЛЬНАЯ ПЕРЕКУПЛЕННОСТЬ: Риск коррекции повышен');
-  } else if (rsi < 35) {
-    comments.push('🔻 ПЕРЕПРОДАННОСТЬ: Потенциал для роста');
-  } else if (rsi > 65) {
-    comments.push('🔺 ПЕРЕКУПЛЕННОСТЬ: Осторожность при входе');
+  
+  // Комментарии по RSI
+  if (rsi < 25) {
+    comments.push('Экстремальная перепроданность — возможен сильный отскок.');
+  } else if (rsi > 75) {
+    comments.push('Экстремальная перекупленность — вероятна коррекция.');
   }
-
-  // Анализ тренда и волатильности
+  
+  // Комментарии по ADX
   if (adx > 35) {
-    comments.push('🎯 СИЛЬНЫЙ ТРЕНД: Импульсное движение подтверждено');
+    comments.push('Сильный тренд, импульс подтверждён.');
   } else if (adx < 20) {
-    comments.push('💤 СЛАБЫЙ ТРЕНД: Рынок в консолидации');
+    comments.push('Слабый тренд, рынок в консолидации.');
   }
-
-  if (volatility > 8) {
-    comments.push('⚡ ВЫСОКАЯ ВОЛАТИЛЬНОСТЬ: Широкие стоп-лоссы');
-  } else if (volatility < 3) {
-    comments.push('🍃 НИЗКАЯ ВОЛАТИЛЬНОСТЬ: Узкие диапазоны');
-  }
-
-  // Анализ подтверждений
-  const bullConfirmations = signal.confirmations.filter(c => c.includes('BULLISH') || c.includes('OVERSOLD')).length;
-  const bearConfirmations = signal.confirmations.filter(c => c.includes('BEARISH') || c.includes('OVERBOUGHT')).length;
   
-  if (bullConfirmations >= 3 && signal.signal === 'LONG') {
-    comments.push('✅ МНОЖЕСТВЕННЫЕ БЫЧЬИ ПОДТВЕРЖДЕНИЯ');
-  } else if (bearConfirmations >= 3 && signal.signal === 'SHORT') {
-    comments.push('✅ МНОЖЕСТВЕННЫЕ МЕДВЕЖЬИ ПОДТВЕРЖДЕНИЯ');
+  // Комментарии по подтверждениям
+  if (signal.confirmations.includes('ADX_STRONG_TREND') && signal.confirmations.includes('HIGH_VOLUME')) {
+    comments.push('Объёмы растут на сильном тренде — хороший момент.');
   }
-
-  // Управление рисками
-  if (signal.rrRatio >= 5.0) {
-    comments.push('💎 ПРЕМИАЛЬНОЕ СООТНОШЕНИЕ R:R');
-  } else if (signal.rrRatio >= 4.0) {
-    comments.push('📊 ВЫСОКОЕ СООТНОШЕНИЕ R:R');
-  }
-
+  
   if (signal.liquidityZoneUsed) {
-    comments.push('🛡️ СТОП ЗА ЗОНОЙ ЛИКВИДНОСТИ');
+    comments.push('Стоп размещён за зоной ликвидности.');
   }
-
-  return comments.join(' • ');
-}
-
-// ==================== РАСЧЕТ УРОВНЕЙ ТЕЙК-ПРОФИТА ====================
-function calculateTakeProfitLevels(entry, stopLoss, signalType, rrRatio) {
-  const risk = Math.abs(entry - stopLoss);
   
-  if (signalType === 'LONG') {
-    return {
-      tp1: parseFloat((entry + risk * CONFIG.tpMultipliers[0]).toFixed(6)),
-      tp2: parseFloat((entry + risk * CONFIG.tpMultipliers[1]).toFixed(6)),
-      tp3: parseFloat((entry + risk * CONFIG.tpMultipliers[2]).toFixed(6))
-    };
-  } else {
-    return {
-      tp1: parseFloat((entry - risk * CONFIG.tpMultipliers[0]).toFixed(6)),
-      tp2: parseFloat((entry - risk * CONFIG.tpMultipliers[1]).toFixed(6)),
-      tp3: parseFloat((entry - risk * CONFIG.tpMultipliers[2]).toFixed(6))
-    };
-  }
+  return comments.length > 0 ? comments.join(' ') : 'Стандартный сетап.';
 }
 
-// ==================== УЛУЧШЕННЫЙ АНАЛИЗ СИГНАЛОВ ====================
+
+// ==================== АНАЛИЗ СИГНАЛА ====================
 function analyzeSignal(coin, priceHistory) {
   const price = coin.current_price;
   const volume = coin.total_volume;
   const marketCap = coin.market_cap;
   
-  // ФИЛЬТР: Исключаем стейблкоины
+  // ФИЛЬТР: Исключаем стейблкоины (надежный фильтр)
   if (STABLECOINS.includes(coin.symbol.toLowerCase())) {
     return null;
   }
   
-  // Базовые фильтры
+  // Фильтры
   if (volume < CONFIG.minVolume) return null;
   if (marketCap < CONFIG.minMarketCap) return null;
   if (priceHistory.length < 100) return null;
   
-  // Расчет индикаторов
+  // Индикаторы
   const rsi = calculateRSI(priceHistory);
   const macd = calculateMACD(priceHistory);
   const bb = calculateBollingerBands(priceHistory);
   const volatility = calculateVolatility(priceHistory);
-  const stoch = calculateStochastic(priceHistory);
-  const atr = calculateATR(priceHistory);
-  const adx = calculateADX(priceHistory);
+  const sma20 = calculateSMA(priceHistory, 20);
+  const sma50 = calculateSMA(priceHistory, 50);
   
+  // EMA индикаторы (НОВОЕ!)
   const ema20 = calculateEMA(priceHistory, 20);
   const ema50 = calculateEMA(priceHistory, 50);
   const ema100 = calculateEMA(priceHistory, 100);
+  
+  // НОВЫЕ ИНДИКАТОРЫ
+  const stoch = calculateStochastic(priceHistory); 
+  const atr = calculateATR(priceHistory); 
+  const adx = calculateADX(priceHistory); 
   
   // Подсчет качества и подтверждений
   let qualityScore = 0;
   const confirmations = [];
   
-  // RSI анализ
-  if (rsi < 25) {
-    qualityScore += 3;
-    confirmations.push('RSI_OVERSOLD_EXTREME');
-  } else if (rsi < 35) {
+  // RSI
+  if (rsi < 30) {
     qualityScore += 2;
     confirmations.push('RSI_OVERSOLD');
-  } else if (rsi > 75) {
-    qualityScore += 3;
-    confirmations.push('RSI_OVERBOUGHT_EXTREME');
-  } else if (rsi > 65) {
+  } else if (rsi > 70) {
     qualityScore += 2;
     confirmations.push('RSI_OVERBOUGHT');
   }
   
-  // Stochastic анализ
-  if (stoch.k < 20) {
-    qualityScore += 2;
-    confirmations.push('STOCH_OVERSOLD_EXTREME');
-  } else if (stoch.k < 30) {
-    qualityScore += 1;
-    confirmations.push('STOCH_OVERSOLD');
-  } else if (stoch.k > 80) {
-    qualityScore += 2;
-    confirmations.push('STOCH_OVERBOUGHT_EXTREME');
-  } else if (stoch.k > 70) {
-    qualityScore += 1;
-    confirmations.push('STOCH_OVERBOUGHT');
-  }
-  
-  // MACD анализ
+  // MACD
   if (macd.histogram > 0 && macd.macd > macd.signal) {
-    qualityScore += 2;
-    confirmations.push('MACD_BULLISH_CROSS');
+    qualityScore += 1;
+    confirmations.push('MACD_BULLISH');
   } else if (macd.histogram < 0 && macd.macd < macd.signal) {
-    qualityScore += 2;
-    confirmations.push('MACD_BEARISH_CROSS');
+    qualityScore += 1;
+    confirmations.push('MACD_BEARISH');
   }
   
   // Bollinger Bands
-  if (price < bb.lower * 0.98) {
-    qualityScore += 3;
-    confirmations.push('BB_EXTREME_OVERSOLD');
-  } else if (price < bb.lower) {
+  if (price < bb.lower) {
     qualityScore += 2;
     confirmations.push('BB_OVERSOLD');
-  } else if (price > bb.upper * 1.02) {
-    qualityScore += 3;
-    confirmations.push('BB_EXTREME_OVERBOUGHT');
   } else if (price > bb.upper) {
     qualityScore += 2;
     confirmations.push('BB_OVERBOUGHT');
   }
   
-  // ADX (сила тренда)
-  if (adx > 40) {
+  // НОВЫЙ БЛОК: Stochastic Oscillator
+  if (stoch.k < 20) {
     qualityScore += 2;
-    confirmations.push('ADX_VERY_STRONG_TREND');
-  } else if (adx > 30) {
-    qualityScore += 1;
+    confirmations.push('STOCH_OVERSOLD');
+  } else if (stoch.k > 80) {
+    qualityScore += 2;
+    confirmations.push('STOCH_OVERBOUGHT');
+  }
+  
+  // НОВЫЙ БЛОК: ADX (Сила тренда)
+  if (adx > 30) {
+    qualityScore += 2;
     confirmations.push('ADX_STRONG_TREND');
-  } else if (adx < 15) {
+  } else if (adx < 20) {
     confirmations.push('ADX_FLAT_MARKET');
   }
   
-  // EMA выравнивание
+  // Тренд
+  if (sma20 > sma50) {
+    qualityScore += 1;
+    confirmations.push('TREND_BULLISH');
+  } else if (sma20 < sma50) {
+    qualityScore += 1;
+    confirmations.push('TREND_BEARISH');
+  }
+  
+  // EMA выравнивание (НОВОЕ!)
   if (ema20 && ema50 && ema100) {
-    if (ema20 > ema50 && ema50 > ema100 && price > ema20) {
-      qualityScore += 3;
-      confirmations.push('EMA_STRONG_BULLISH_ALIGNMENT');
-    } else if (ema20 < ema50 && ema50 < ema100 && price < ema20) {
-      qualityScore += 3;
-      confirmations.push('EMA_STRONG_BEARISH_ALIGNMENT');
+    if (ema20 > ema50 && ema50 > ema100) {
+      qualityScore += 2;
+      confirmations.push('EMA_BULLISH_ALIGNMENT');
+    } else if (ema20 < ema50 && ema50 < ema100) {
+      qualityScore += 2;
+      confirmations.push('EMA_BEARISH_ALIGNMENT');
     }
   }
   
   // Объем
-  if (volume > CONFIG.minVolume * 3) {
-    qualityScore += 2;
-    confirmations.push('VERY_HIGH_VOLUME');
-  } else if (volume > CONFIG.minVolume * 1.5) {
+  if (volume > CONFIG.minVolume * 2) {
     qualityScore += 1;
     confirmations.push('HIGH_VOLUME');
   }
   
   // Минимальные требования
   if (qualityScore < CONFIG.minQualityScore) return null;
+  if (confirmations.length < 2) return null;
   
-  // Определение сигнала с УСИЛЕННЫМИ КРИТЕРИЯМИ
+  // Определение сигнала
   let signal = null;
   let confidence = 0;
   
-  // LONG сигнал (УСИЛЕННЫЕ ТРЕБОВАНИЯ)
-  const longConditions = (
-    (rsi < 30 && stoch.k < 25 && macd.histogram > 0) ||                    // Мульти-перепроданность + MACD
-    (price < bb.lower && rsi < 35 && ema20 > ema50) ||                    // BB + RSI + тренд
-    (rsi < 28 && stoch.k < 20 && adx > 25)                                // Экстремальные условия + тренд
-  );
-  
-  // SHORT сигнал (УСИЛЕННЫЕ ТРЕБОВАНИЯ)
-  const shortConditions = (
-    (rsi > 70 && stoch.k > 75 && macd.histogram < 0) ||                   // Мульти-перекупленность + MACD
-    (price > bb.upper && rsi > 65 && ema20 < ema50) ||                    // BB + RSI + тренд
-    (rsi > 72 && stoch.k > 80 && adx > 25)                                // Экстремальные условия + тренд
-  );
-  
-  if (longConditions) {
+  // LONG сигнал (УЖЕСТОЧЕНО)
+  if (
+    (rsi < 35 && macd.histogram > 0 && stoch.k < 30 && adx > 25) || // RSI + MACD + Stoch + Strong Trend
+    (price < bb.lower && rsi < 40 && stoch.k < 40) ||               // BB Oversold + RSI + Stoch
+    (rsi < 30 && sma20 > sma50)
+  ) {
     signal = 'LONG';
-    const trendBonus = ema20 > ema50 ? 1.2 : 1.0;
-    const extremeBonus = rsi < 25 ? 1.15 : 1.0;
+    const trendBonus = sma20 > sma50 ? 1.15 : 1.0;
     confidence = Math.min(
-      (60 + (35 - rsi) * 1.5 + confirmations.length * 5) * trendBonus * extremeBonus,
+      (55 + (35 - rsi) * 1.2 + confirmations.length * 4) * trendBonus,
       95
     );
-  } else if (shortConditions) {
+  }
+  // SHORT сигнал (УЖЕСТОЧЕНО)
+  else if (
+    (rsi > 65 && macd.histogram < 0 && stoch.k > 70 && adx > 25) || // RSI + MACD + Stoch + Strong Trend
+    (price > bb.upper && rsi > 60 && stoch.k > 60) ||                // BB Overbought + RSI + Stoch
+    (rsi > 70 && sma20 < sma50)
+  ) {
     signal = 'SHORT';
-    const trendBonus = ema20 < ema50 ? 1.2 : 1.0;
-    const extremeBonus = rsi > 75 ? 1.15 : 1.0;
+    const trendBonus = sma20 < sma50 ? 1.15 : 1.0;
     confidence = Math.min(
-      (60 + (rsi - 65) * 1.5 + confirmations.length * 5) * trendBonus * extremeBonus,
+      (55 + (rsi - 65) * 1.2 + confirmations.length * 4) * trendBonus,
       95
     );
   }
   
   if (!signal || confidence < CONFIG.minConfidence) return null;
-  
-  // РАСЧЕТ ЦЕН С ВЫСОКИМ RR (1:4+)
+   // Расчет цен (УЛУЧШЕННЫЙ с зонами ликвидности)
   const entry = price;
-  let sl, rrRatio;
+  let sl, tp, rrRatio;
   let liquidityZoneUsed = false;
   
-  const liquidityZones = findLiquidityZones(priceHistory, 25);
-  const atrMultiplier = signal === 'LONG' ? 2.8 : 2.8; // УВЕЛИЧЕНО для большего RR
+  // Находим зоны ликвидности
+  const liquidityZones = findLiquidityZones(priceHistory, 20);
+  
+  const atrMultiplier = 2.5;
+  const slDistance = atr * atrMultiplier;
   
   if (signal === 'LONG') {
-    let calculatedSL = entry - (atr * atrMultiplier);
+    // Базовый стоп-лосс
+    let calculatedSL = entry - slDistance;
     
+    // Ищем ближайшую зону поддержки ниже цены
     const supportZone = findNearestLiquidityZone(entry, liquidityZones, 'support');
+    
+    // Если есть зона поддержки и она ниже цены, размещаем стоп чуть ниже неё
     if (supportZone && supportZone.price < entry) {
-      const zoneBasedSL = supportZone.price * 0.995;
-      if (entry - zoneBasedSL < atr * 3.5) {
+      const zoneBasedSL = supportZone.price * 0.997; // На 0.3% ниже зоны
+      // Используем зону, если она не слишком далеко
+      if (entry - zoneBasedSL < slDistance * 1.5) {
         calculatedSL = zoneBasedSL;
         liquidityZoneUsed = true;
       }
     }
     
     sl = calculatedSL;
-    rrRatio = (entry + (entry - sl) * CONFIG.minRRRatio - entry) / (entry - sl);
+    tp = entry + (entry - sl) * CONFIG.minRRRatio;
+    rrRatio = (tp - entry) / (entry - sl);
   } else {
-    let calculatedSL = entry + (atr * atrMultiplier);
+    // Базовый стоп-лосс
+    let calculatedSL = entry + slDistance;
     
+    // Ищем ближайшую зону сопротивления выше цены
     const resistanceZone = findNearestLiquidityZone(entry, liquidityZones, 'resistance');
+    
     if (resistanceZone && resistanceZone.price > entry) {
-      const zoneBasedSL = resistanceZone.price * 1.005;
-      if (zoneBasedSL - entry < atr * 3.5) {
+      const zoneBasedSL = resistanceZone.price * 1.003; // На 0.3% выше зоны
+      if (zoneBasedSL - entry < slDistance * 1.5) {
         calculatedSL = zoneBasedSL;
         liquidityZoneUsed = true;
       }
     }
     
     sl = calculatedSL;
-    rrRatio = (entry - (sl - entry) * CONFIG.minRRRatio - entry) / (sl - entry);
-  }
-  
-  // ДОПОЛНИТЕЛЬНАЯ ПРОВЕРКА RR
-  if (rrRatio < CONFIG.minRRRatio) {
-    // Пытаемся улучшить RR за счет более агрессивного SL
-    if (signal === 'LONG') {
-      sl = entry - (atr * 2.2);
-      rrRatio = (entry + (entry - sl) * CONFIG.minRRRatio - entry) / (entry - sl);
-    } else {
-      sl = entry + (atr * 2.2);
-      rrRatio = (entry - (sl - entry) * CONFIG.minRRRatio - entry) / (sl - entry);
-    }
+    tp = entry - (sl - entry) * CONFIG.minRRRatio;
+    rrRatio = (entry - tp) / (sl - entry);
   }
   
   if (rrRatio < CONFIG.minRRRatio) return null;
   
-  // Расчет трех уровней тейк-профита
-  const takeProfits = calculateTakeProfitLevels(entry, sl, signal, rrRatio);
-  
-  // Определение уровня сигнала
+  // Определение уровня
   const isGodTier = 
     qualityScore >= CONFIG.godTier.qualityScore &&
     confidence >= CONFIG.godTier.confidence &&
@@ -556,8 +523,8 @@ function analyzeSignal(coin, priceHistory) {
     pair: `${coin.symbol.toUpperCase()}/USDT`,
     signal,
     entry: parseFloat(entry.toFixed(6)),
-    stopLoss: parseFloat(sl.toFixed(6)),
-    takeProfits,
+    tp: parseFloat(tp.toFixed(6)),
+    sl: parseFloat(sl.toFixed(6)),
     confidence: Math.round(confidence),
     qualityScore,
     rrRatio: parseFloat(rrRatio.toFixed(2)),
@@ -579,78 +546,12 @@ function analyzeSignal(coin, priceHistory) {
   };
 }
 
-// ==================== ОТПРАВКА В TELEGRAM С 3 УРОВНЯМИ TP ====================
-async function sendSignalToTelegram(signal) {
-  if (!CHAT_ID) {
-    console.log('⚠️ CHAT_ID не установлен. Сигнал не отправлен.');
-    return false;
-  }
-  
-  try {
-    const tierEmoji = signal.tier === 'GOD TIER' ? '🔥' : '🟦';
-    const tierText = signal.tier === 'GOD TIER' ? 'GOD TIER SIGNAL' : 'PREMIUM SIGNAL';
-    const directionEmoji = signal.signal === 'LONG' ? '🟢' : '🔴';
-    
-    const timestamp = signal.timestamp.toLocaleString('ru-RU', {
-      day: '2-digit',
-      month: '2-digit',
-      year: 'numeric',
-      hour: '2-digit',
-      minute: '2-digit',
-      second: '2-digit'
-    }).replace(',', ' —');
-    
-    const comment = generateProfessionalComment(signal);
-    
-    const message = `
-<b>${tierEmoji}${tierText}${tierEmoji}</b>
-
-${directionEmoji} <b>${signal.signal} ${signal.pair}</b>
-
-🎯 <b>ENTRY:</b> ${signal.entry.toFixed(6)}
-🛑 <b>STOP LOSS:</b> ${signal.stopLoss.toFixed(6)}
-
-📊 <b>TAKE PROFIT LEVELS:</b>
-├ TP1 (30%): ${signal.takeProfits.tp3.toFixed(6)} 🟢 RR 1:1.5
-├ TP2 (50%): ${signal.takeProfits.tp2.toFixed(6)} 🟡 RR 1:2.5  
-└ TP3 (20%): ${signal.takeProfits.tp1.toFixed(6)} 🔴 RR 1:4.0
-
-⚖️ <b>RISK MANAGEMENT:</b>
-├ R:R Ratio: 1:${signal.rrRatio.toFixed(1)}
-├ Confidence: ${signal.confidence}%
-└ Quality Score: ${signal.qualityScore}/10
-
-📈 <b>TECHNICALS:</b>
-├ RSI: ${signal.indicators.rsi}
-├ Stoch K: ${signal.indicators.stochK}
-├ ADX: ${signal.indicators.adx}
-├ Volatility: ${signal.indicators.volatility}%
-└ ATR: ${signal.indicators.atr.toFixed(6)}
-
-✅ <b>CONFIRMATIONS:</b>
-${signal.confirmations.map(conf => `├ ${conf}`).join('\n')}
-
-💬 <b>ANALYSIS:</b>
-<i>${comment}</i>
-
-🏦 <b>EXCHANGE:</b> ${signal.exchange}
-⏱ <b>${timestamp}</b>
-
-<code>⚠️ RISK WARNING: Use proper position sizing. Max 2-3% per trade.</code>
-    `.trim();
-    
-    await bot.telegram.sendMessage(CHAT_ID, message, { parse_mode: 'HTML' });
-    console.log(`✅ Сигнал ${signal.pair} отправлен в Telegram (RR 1:${signal.rrRatio})`);
-    return true;
-  } catch (error) {
-    console.error('❌ Ошибка отправки в Telegram:', error.message);
-    return false;
-  }
-}
-
-// ==================== ПОЛУЧЕНИЕ ДАННЫХ И ЗАПУСК ====================
+// ==================== ПОЛУЧЕНИЕ ДАННЫХ ====================
 async function fetchMarketData() {
   try {
+    // ВНИМАНИЕ: CoinGecko API с sparkline=true дает только дневные цены.
+    // Для реального скальпинга вам нужно будет переключиться на эндпоинт OHLC 
+    // и запрашивать 1-часовые свечи.
     const url = `${CONFIG.apiUrl}/coins/markets?vs_currency=usd&order=volume_desc&per_page=${CONFIG.topCoins}&page=1&sparkline=true&price_change_percentage=1h,24h`;
     
     const headers = {
@@ -658,6 +559,7 @@ async function fetchMarketData() {
       'User-Agent': 'Mozilla/5.0'
     };
     
+    // Добавляем API ключ если есть
     if (COINGECKO_API_KEY) {
       headers['x-cg-demo-api-key'] = COINGECKO_API_KEY;
     }
@@ -679,7 +581,7 @@ async function fetchMarketData() {
 }
 
 async function generateSignals() {
-  console.log('🔍 Генерация сигналов с высоким RR...');
+  console.log('🔍 Генерация сигналов...');
   
   const marketData = await fetchMarketData();
   
@@ -689,10 +591,13 @@ async function generateSignals() {
   }
   
   const signals = marketData
+    // ФИЛЬТР: Исключаем стейблкоины
     .filter(coin => !STABLECOINS.includes(coin.symbol.toLowerCase()))
     .map(coin => {
+      // Используем sparkline_in_7d.price как priceHistory
       const priceHistory = coin.sparkline_in_7d.price;
       
+      // Проверяем, достаточно ли данных для анализа
       if (!priceHistory || priceHistory.length < 100) {
         return null;
       }
@@ -700,28 +605,96 @@ async function generateSignals() {
       return analyzeSignal(coin, priceHistory);
     })
     .filter(signal => signal !== null)
-    .sort((a, b) => b.confidence - a.confidence);
+    .sort((a, b) => b.confidence - a.confidence); // Сортируем по уверенности
     
-  console.log(`✅ Сгенерировано ${signals.length} сигналов с RR 1:4+`);
+  console.log(`✅ Сгенерировано ${signals.length} сигналов.`);
   return signals;
 }
 
+// ==================== ОТПРАВКА В TELEGRAM (ОБНОВЛЕННЫЙ ФОРМАТ) ====================
+async function sendSignalToTelegram(signal) {
+  if (!CHAT_ID) {
+    console.log('⚠️ CHAT_ID не установлен. Сигнал не отправлен.');
+    return false;
+  }
+  
+  try {
+    const tierEmoji = signal.tier === 'GOD TIER' ? '🔥' : '🟦';
+    const tierText = signal.tier === 'GOD TIER' ? 'GOD TIER SIGNAL' : 'PREMIUM SIGNAL';
+    
+    // Эмодзи для направления сигнала
+    const directionEmoji = signal.signal === 'LONG' ? '🟢' : '🔴';
+    
+    // Форматирование даты и времени
+    const timestamp = signal.timestamp.toLocaleString('ru-RU', {
+      day: '2-digit',
+      month: '2-digit',
+      year: 'numeric',
+      hour: '2-digit',
+      minute: '2-digit',
+      second: '2-digit'
+    }).replace(',', ' —');
+    
+    // Генерация комментария
+    const comment = generateTraderComment(signal);
+    
+    const message = `
+<b>${tierEmoji}${tierText}${tierEmoji}</b>
+
+${directionEmoji} <b>${signal.signal} ${signal.pair}</b>
+
+💵 <b>Entry:</b> ${signal.entry.toFixed(6)}
+🎯 <b>Take Profit:</b> ${signal.tp.toFixed(6)}
+🛑 <b>Stop Loss:</b> ${signal.sl.toFixed(6)}
+
+🎲 <b>R:R Ratio:</b> 1:${signal.rrRatio.toFixed(1)}
+📊 <b>Confidence:</b> ${signal.confidence}%
+🏆 <b>Quality:</b> ${signal.qualityScore}/10
+
+📉 <b>RSI:</b> ${signal.indicators.rsi}
+📈 <b>Stoch K:</b> ${signal.indicators.stochK}
+🌪 <b>Volatility:</b> ${signal.indicators.volatility}%
+📡 <b>ADX:</b> ${signal.indicators.adx}
+📏 <b>ATR:</b> ${signal.indicators.atr.toFixed(6)}
+
+🔍 <b>Confirmations:</b>
+${signal.confirmations.map(conf => `• ${conf}`).join('\n')}
+
+💬 <b>Comment:</b> <i>${comment}</i>
+
+🏦 <b>Exchange:</b> ${signal.exchange}
+⏱ <b>${timestamp}</b>
+    `.trim();
+    
+    await bot.telegram.sendMessage(CHAT_ID, message, { parse_mode: 'HTML' });
+    console.log(`✅ Сигнал ${signal.pair} отправлен в Telegram`);
+    return true;
+  } catch (error) {
+    console.error('❌ Ошибка отправки в Telegram:', error.message);
+    return false;
+  }
+}
+
+// ==================== CRON ЗАДАЧА ====================
 async function runSignalsTask() {
-  console.log('\n🔄 === ЗАПУСК ЗАДАЧИ С ВЫСОКИМ RR ===');
+  console.log('\n🔄 === ЗАПУСК ЗАДАЧИ ===');
   console.log(`⏰ Время: ${new Date().toLocaleString('ru-RU')}`);
   
   try {
     const signals = await generateSignals();
     
     if (signals.length === 0) {
-      console.log('ℹ️  Сигналов с требуемым RR 1:4 не найдено');
+      console.log('ℹ️  Сигналов не найдено');
       return;
     }
     
-    console.log(`📤 Отправка ${signals.length} сигналов...`);
+  
+    const signalsToSend = signals; 
+    console.log(`📤 Отправка ${signalsToSend.length} сигналов...`);
     
-    for (const signal of signals) {
+    for (const signal of signalsToSend) {
       await sendSignalToTelegram(signal);
+      // Задержка между сообщениями
       await new Promise(resolve => setTimeout(resolve, 2000));
     }
     
@@ -731,21 +704,26 @@ async function runSignalsTask() {
   }
 }
 
-// ==================== ЗАПУСК СИСТЕМЫ ====================
+// ==================== ЗАПУСК ====================
 async function start() {
   try {
+    // Удаляем webhook и запускаем long polling
     await bot.telegram.deleteWebhook();
     console.log('✅ Webhook удален');
     
+    // Получаем информацию о боте
     const botInfo = await bot.telegram.getMe();
     console.log(`✅ Бот подключен: @${botInfo.username}`);
     
+    // Запускаем бота
     bot.launch();
     console.log('✅ Бот запущен (long polling)');
     
+    // Планируем CRON задачу каждые 10 минут (БЫЛО 5)
     cron.schedule('*/10 * * * *', runSignalsTask);
     console.log('✅ CRON задача запланирована (каждые 10 минут)');
     
+    // Первый запуск через 10 секунд
     console.log('⏳ Первый запуск через 10 секунд...\n');
     setTimeout(runSignalsTask, 10000);
     
@@ -755,7 +733,9 @@ async function start() {
   }
 }
 
+// Graceful shutdown
 process.once('SIGINT', () => bot.stop('SIGINT'));
 process.once('SIGTERM', () => bot.stop('SIGTERM'));
 
+// Запуск
 start();
