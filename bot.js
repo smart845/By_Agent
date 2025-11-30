@@ -540,9 +540,9 @@ async function start() {
     bot.launch();
     console.log('✅ Бот запущен (long polling)');
     
-    // Планируем CRON задачу каждые 5 минут
-    cron.schedule('*/5 * * * *', runSignalsTask);
-    console.log('✅ CRON задача запланирована (каждые 5 минут)');
+    // Планируем CRON задачу каждые 10 минут
+    cron.schedule('*/10 * * * *', runSignalsTask);
+    console.log('✅ CRON задача запланирована (каждые 10 минут)');
     
     // Первый запуск через 10 секунд
     console.log('⏳ Первый запуск через 10 секунд...\n');
