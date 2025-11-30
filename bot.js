@@ -43,7 +43,7 @@ const CONFIG = {
 };
 
 // ==================== ИСКЛЮЧЕНИЯ ====================
-const STABLECOINS = ['usdt', 'usdc', 'dai', 'busd', 'tusd', 'usdp', 'frax', 'ustc', 'eurs'];
+const STABLECOINS = ['usdt', 'usdc', 'usdc.e', 'dai', 'busd', 'tusd', 'usdp', 'frax', 'ustc', 'eurs'];
 
 // ==================== TELEGRAM BOT ====================
 const bot = new Telegraf(BOT_TOKEN );
@@ -96,9 +96,17 @@ bot.command('test', async (ctx) => {
     exchange: 'BINANCE',
     indicators: {
       rsi: 28,
-      volatility: 5.2
+      volatility: 5.2,
+      stochK: 25,
+      adx: 35,
+      atr: 0.015,
+      ema20: 44800,
+      ema50: 44500,
+      ema100: 44000
     },
-    confirmations: ['RSI_OVERSOLD', 'MACD_BULLISH', 'BB_OVERSOLD']
+    confirmations: ['RSI_OVERSOLD', 'MACD_BULLISH', 'BB_OVERSOLD', 'EMA_BULLISH_ALIGNMENT', 'HIGH_VOLUME'],
+    liquidityZoneUsed: true,
+    timestamp: new Date()
   };
   
   await sendSignalToTelegram(testSignal);
@@ -220,6 +228,86 @@ function calculateADX(prices, period = 14) {
   return Math.min(50, volatility * 5); 
 }
 
+// ==================== ЗОНЫ ЛИКВИДНОСТИ ====================
+function findLiquidityZones(prices, period = 20) {
+  const zones = [];
+  
+  for (let i = period; i < prices.length - period; i++) {
+    const leftSlice = prices.slice(i - period, i);
+    const rightSlice = prices.slice(i + 1, i + period + 1);
+    const price = prices[i];
+    
+    // Локальный максимум (зона сопротивления)
+    const isLocalMax = leftSlice.every(p => p <= price) && rightSlice.every(p => p <= price);
+    if (isLocalMax) {
+      zones.push({ type: 'resistance', price, strength: 1 });
+    }
+    
+    // Локальный минимум (зона поддержки)
+    const isLocalMin = leftSlice.every(p => p >= price) && rightSlice.every(p => p >= price);
+    if (isLocalMin) {
+      zones.push({ type: 'support', price, strength: 1 });
+    }
+  }
+  
+  return zones;
+}
+
+// Найти ближайшую зону ликвидности
+function findNearestLiquidityZone(currentPrice, zones, type) {
+  const relevantZones = zones.filter(z => z.type === type);
+  if (relevantZones.length === 0) return null;
+  
+  // Сортируем по близости к текущей цене
+  relevantZones.sort((a, b) => {
+    return Math.abs(a.price - currentPrice) - Math.abs(b.price - currentPrice);
+  });
+  
+  return relevantZones[0];
+}
+
+// ==================== ГЕНЕРАЦИЯ КОММЕНТАРИЕВ ====================
+function generateTraderComment(signal) {
+  const comments = [];
+  const rsi = signal.indicators.rsi;
+  const adx = signal.indicators.adx;
+  const confidence = signal.confidence;
+  
+  // Комментарии по уверенности
+  if (confidence >= 85) {
+    comments.push('Сильный сетап, все индикаторы подтверждают.');
+  } else if (confidence >= 70) {
+    comments.push('Хороший сетап с множественными подтверждениями.');
+  } else if (confidence < 65) {
+    comments.push('Сигнал слабый, ждём подтверждения объёма.');
+  }
+  
+  // Комментарии по RSI
+  if (rsi < 25) {
+    comments.push('Экстремальная перепроданность — возможен сильный отскок.');
+  } else if (rsi > 75) {
+    comments.push('Экстремальная перекупленность — вероятна коррекция.');
+  }
+  
+  // Комментарии по ADX
+  if (adx > 35) {
+    comments.push('Сильный тренд, импульс подтверждён.');
+  } else if (adx < 20) {
+    comments.push('Слабый тренд, рынок в консолидации.');
+  }
+  
+  // Комментарии по подтверждениям
+  if (signal.confirmations.includes('ADX_STRONG_TREND') && signal.confirmations.includes('HIGH_VOLUME')) {
+    comments.push('Объёмы растут на сильном тренде — хороший момент.');
+  }
+  
+  if (signal.liquidityZoneUsed) {
+    comments.push('Стоп размещён за зоной ликвидности.');
+  }
+  
+  return comments.length > 0 ? comments.join(' ') : 'Стандартный сетап.';
+}
+
 
 // ==================== АНАЛИЗ СИГНАЛА ====================
 function analyzeSignal(coin, priceHistory) {
@@ -244,6 +332,11 @@ function analyzeSignal(coin, priceHistory) {
   const volatility = calculateVolatility(priceHistory);
   const sma20 = calculateSMA(priceHistory, 20);
   const sma50 = calculateSMA(priceHistory, 50);
+  
+  // EMA индикаторы (НОВОЕ!)
+  const ema20 = calculateEMA(priceHistory, 20);
+  const ema50 = calculateEMA(priceHistory, 50);
+  const ema100 = calculateEMA(priceHistory, 100);
   
   // НОВЫЕ ИНДИКАТОРЫ
   const stoch = calculateStochastic(priceHistory); 
@@ -307,6 +400,17 @@ function analyzeSignal(coin, priceHistory) {
     confirmations.push('TREND_BEARISH');
   }
   
+  // EMA выравнивание (НОВОЕ!)
+  if (ema20 && ema50 && ema100) {
+    if (ema20 > ema50 && ema50 > ema100) {
+      qualityScore += 2;
+      confirmations.push('EMA_BULLISH_ALIGNMENT');
+    } else if (ema20 < ema50 && ema50 < ema100) {
+      qualityScore += 2;
+      confirmations.push('EMA_BEARISH_ALIGNMENT');
+    }
+  }
+  
   // Объем
   if (volume > CONFIG.minVolume * 2) {
     qualityScore += 1;
@@ -349,21 +453,54 @@ function analyzeSignal(coin, priceHistory) {
   }
   
   if (!signal || confidence < CONFIG.minConfidence) return null;
-  
-  // Расчет цен (ДИНАМИЧЕСКИЙ SL/TP на основе ATR)
+   // Расчет цен (УЛУЧШЕННЫЙ с зонами ликвидности)
   const entry = price;
   let sl, tp, rrRatio;
+  let liquidityZoneUsed = false;
   
-  const atrMultiplier = 2.5; // 2.5 ATR - стандартный стоп-лосс для скальпинга
+  // Находим зоны ликвидности
+  const liquidityZones = findLiquidityZones(priceHistory, 20);
+  
+  const atrMultiplier = 2.5;
   const slDistance = atr * atrMultiplier;
   
   if (signal === 'LONG') {
-    sl = entry - slDistance;  // Динамический стоп-лосс
-    tp = entry + slDistance * CONFIG.minRRRatio; // TP = SL * RRRatio
+    // Базовый стоп-лосс
+    let calculatedSL = entry - slDistance;
+    
+    // Ищем ближайшую зону поддержки ниже цены
+    const supportZone = findNearestLiquidityZone(entry, liquidityZones, 'support');
+    
+    // Если есть зона поддержки и она ниже цены, размещаем стоп чуть ниже неё
+    if (supportZone && supportZone.price < entry) {
+      const zoneBasedSL = supportZone.price * 0.997; // На 0.3% ниже зоны
+      // Используем зону, если она не слишком далеко
+      if (entry - zoneBasedSL < slDistance * 1.5) {
+        calculatedSL = zoneBasedSL;
+        liquidityZoneUsed = true;
+      }
+    }
+    
+    sl = calculatedSL;
+    tp = entry + (entry - sl) * CONFIG.minRRRatio;
     rrRatio = (tp - entry) / (entry - sl);
   } else {
-    sl = entry + slDistance;  // Динамический стоп-лосс
-    tp = entry - slDistance * CONFIG.minRRRatio; // TP = SL * RRRatio
+    // Базовый стоп-лосс
+    let calculatedSL = entry + slDistance;
+    
+    // Ищем ближайшую зону сопротивления выше цены
+    const resistanceZone = findNearestLiquidityZone(entry, liquidityZones, 'resistance');
+    
+    if (resistanceZone && resistanceZone.price > entry) {
+      const zoneBasedSL = resistanceZone.price * 1.003; // На 0.3% выше зоны
+      if (zoneBasedSL - entry < slDistance * 1.5) {
+        calculatedSL = zoneBasedSL;
+        liquidityZoneUsed = true;
+      }
+    }
+    
+    sl = calculatedSL;
+    tp = entry - (sl - entry) * CONFIG.minRRRatio;
     rrRatio = (entry - tp) / (sl - entry);
   }
   
@@ -398,9 +535,13 @@ function analyzeSignal(coin, priceHistory) {
       volatility: parseFloat(volatility.toFixed(2)),
       stochK: stoch.k,
       adx: Math.round(adx),
-      atr: parseFloat(atr.toFixed(6))
+      atr: parseFloat(atr.toFixed(6)),
+      ema20: ema20 ? parseFloat(ema20.toFixed(6)) : null,
+      ema50: ema50 ? parseFloat(ema50.toFixed(6)) : null,
+      ema100: ema100 ? parseFloat(ema100.toFixed(6)) : null
     },
     confirmations,
+    liquidityZoneUsed,
     timestamp: new Date()
   };
 }
@@ -470,7 +611,7 @@ async function generateSignals() {
   return signals;
 }
 
-// ==================== ОТПРАВКА В TELEGRAM ====================
+// ==================== ОТПРАВКА В TELEGRAM (УЛУЧШЕННЫЙ ФОРМАТ) ====================
 async function sendSignalToTelegram(signal) {
   if (!CHAT_ID) {
     console.log('⚠️ CHAT_ID не установлен. Сигнал не отправлен.');
@@ -478,30 +619,99 @@ async function sendSignalToTelegram(signal) {
   }
   
   try {
-    const direction = signal.signal === 'LONG' ? '🟢 LONG' : '🔴 SHORT';
     const tierEmoji = signal.tier === 'GOD TIER' ? '🔥' : '⭐';
     
+    // Расчет зоны входа (диапазон)
+    const entryLow = signal.entry * 0.998;
+    const entryHigh = signal.entry * 1.002;
+    
+    // Расчет 3 уровней тейк-профита
+    let tp1, tp2, tp3;
+    if (signal.signal === 'LONG') {
+      tp1 = signal.entry + (signal.tp - signal.entry) * 0.4;
+      tp2 = signal.entry + (signal.tp - signal.entry) * 0.7;
+      tp3 = signal.tp;
+    } else {
+      tp1 = signal.entry - (signal.entry - signal.tp) * 0.4;
+      tp2 = signal.entry - (signal.entry - signal.tp) * 0.7;
+      tp3 = signal.tp;
+    }
+    
+    // Генерация комментария
+    const comment = generateTraderComment(signal);
+    
+    // Описание стоп-лосса
+    const slDescription = signal.liquidityZoneUsed 
+      ? `ниже ${signal.sl.toFixed(6)} (за зоной ликвидности)`
+      : `ниже ${signal.sl.toFixed(6)}`;
+    
+    const slDescriptionShort = signal.liquidityZoneUsed
+      ? `выше ${signal.sl.toFixed(6)} (за зоной ликвидности)`
+      : `выше ${signal.sl.toFixed(6)}`;
+    
+    // Проверка EMA выравнивания
+    let emaStatus = '';
+    if (signal.confirmations.includes('EMA_BULLISH_ALIGNMENT')) {
+      emaStatus = 'EMA20 > EMA50 > EMA100, импульс вверх';
+    } else if (signal.confirmations.includes('EMA_BEARISH_ALIGNMENT')) {
+      emaStatus = 'EMA20 < EMA50 < EMA100, импульс вниз';
+    } else {
+      emaStatus = 'Смешанное выравнивание EMA';
+    }
+    
+    // Статус RSI
+    let rsiStatus = '';
+    if (signal.indicators.rsi < 30) {
+      rsiStatus = `${signal.indicators.rsi} (выход из перепроданности)`;
+    } else if (signal.indicators.rsi > 70) {
+      rsiStatus = `${signal.indicators.rsi} (выход из перекупленности)`;
+    } else {
+      rsiStatus = `${signal.indicators.rsi}`;
+    }
+    
+    // Объёмы
+    const volumeStatus = signal.confirmations.includes('HIGH_VOLUME') 
+      ? 'выше среднего' 
+      : 'стандартные';
+    
+    // MACD статус
+    let macdStatus = '';
+    if (signal.confirmations.includes('MACD_BULLISH')) {
+      macdStatus = 'пересёк нулевую линию вверх';
+    } else if (signal.confirmations.includes('MACD_BEARISH')) {
+      macdStatus = 'пересёк нулевую линию вниз';
+    } else {
+      macdStatus = 'нейтральный';
+    }
+    
     const message = `
-${tierEmoji} <b>${signal.tier} SIGNAL</b>
-${direction} <b>${signal.pair}</b>
+${tierEmoji} <b>${signal.tier}</b>
 
-💵 Entry: $${signal.entry}
-🎯 Take Profit: $${signal.tp}
-🛑 Stop Loss: $${signal.sl}
+<b>АКТИВ:</b> ${signal.pair}
+<b>ТИП СИГНАЛА:</b> ${signal.signal}
+<b>ТАЙМФРЕЙМ:</b> M5
 
-📊 R:R Ratio: 1:${signal.rrRatio}
-🎲 Confidence: ${signal.confidence}%
-🏆 Quality: ${signal.qualityScore}/10
+<b>ВХОД:</b> ${entryLow.toFixed(6)}–${entryHigh.toFixed(6)}
+<b>СТОП:</b> ${signal.signal === 'LONG' ? slDescription : slDescriptionShort}
+<b>ТЕЙКИ:</b>
+ • TP1: ${tp1.toFixed(6)}
+ • TP2: ${tp2.toFixed(6)}
+ • TP3: ${tp3.toFixed(6)}
 
-📈 RSI: ${signal.indicators.rsi} | Stoch K: ${signal.indicators.stochK}
-📊 Volatility: ${signal.indicators.volatility}% | ADX: ${signal.indicators.adx}
-📏 ATR: ${signal.indicators.atr}
+<b>ИНДИКАТОРЫ:</b>
+ • ${emaStatus}
+ • RSI ${rsiStatus}
+ • Объёмы ${volumeStatus}
+ • MACD ${macdStatus}
+ • ADX ${signal.indicators.adx} | Stoch ${signal.indicators.stochK}
 
-🔍 Confirmations:
-${signal.confirmations.map(c => `  • ${c}`).join('\n')}
+<b>ОЦЕНКА СЕТАПА:</b> ${signal.confidence >= 80 ? 'высокая' : signal.confidence >= 65 ? 'средняя' : 'низкая'} (≈ ${signal.confidence}%)
+<b>РИСК:</b> ${signal.rrRatio >= 4 ? 'низкий' : 'умеренный'} (R:R 1:${signal.rrRatio})
+<b>СТАТУС:</b> активен до ${signal.signal === 'LONG' ? 'пробоя' : 'пробоя'} ${signal.sl.toFixed(6)}
 
-🏦 Exchange: ${signal.exchange}
-⏰ ${signal.timestamp.toLocaleString('ru-RU')}
+<b>КОММЕНТАРИЙ:</b> ${comment}
+
+🏦 ${signal.exchange} | ⏰ ${signal.timestamp.toLocaleString('ru-RU', { hour: '2-digit', minute: '2-digit' })}
     `.trim();
     
     await bot.telegram.sendMessage(CHAT_ID, message, { parse_mode: 'HTML' });
