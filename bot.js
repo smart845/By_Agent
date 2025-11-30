@@ -423,6 +423,14 @@ async function generateSignals() {
   if (marketData.length === 0) {
     console.log('⚠️  Нет данных с рынка');
     return [];
+    const signals = marketData
+    // НОВЫЙ ФИЛЬТР: Исключаем стейблкоины
+    .filter(coin => !STABLECOINS.includes(coin.symbol.toLowerCase()))
+    // ---------------------------------
+    .map(coin => {
+      // ... остальной код
+    })
+    .filter(signal => signal !== null);
   }
   
   const signals = [];
