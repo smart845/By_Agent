@@ -684,52 +684,32 @@ async function sendSignalToTelegram(signal) {
       macdStatus = 'нейтральный';
     }
     
-    // Эмодзи для направления сигнала
-    const directionEmoji = signal.signal === 'LONG' ? '🟢' : '🔴';
-    const directionText = signal.signal === 'LONG' ? '<b>LONG ⬆️</b>' : '<b>SHORT ⬇️</b>';
-    
-    // Эмодзи для оценки сетапа
-    const setupEmoji = signal.confidence >= 80 ? '🔥' : signal.confidence >= 65 ? '⚡' : '⚠️';
-    const setupText = signal.confidence >= 80 ? '<b>высокая</b>' : signal.confidence >= 65 ? '<b>средняя</b>' : 'низкая';
-    
-    // Эмодзи для риска
-    const riskEmoji = signal.rrRatio >= 4 ? '✅' : '⚖️';
-    const riskText = signal.rrRatio >= 4 ? '<b>низкий</b>' : 'умеренный';
-    
     const message = `
-${tierEmoji} <b>${signal.tier}</b>
-━━━━━━━━━━━━━━━━━━━━
+<code>┌─────────────────────┐
+│ ${tierEmoji} ${signal.tier === 'GOD TIER' ? 'GOD TIER' : 'PREMIUM'} SIGNAL     │
+│ ${signal.signal === 'LONG' ? '🟢' : '🔴'} ${signal.signal} ${signal.pair}${' '.repeat(Math.max(0, 10 - signal.pair.length))}│
+└─────────────────────┘</code>
 
-${directionEmoji} <b>АКТИВ:</b> <b>${signal.pair}</b>
-📊 <b>ТИП:</b> ${directionText}
-⏱ <b>ТАЙМФРЕЙМ:</b> M5
+💵 <b>Entry:</b> $${entryLow.toFixed(2)}–$${entryHigh.toFixed(2)}
+🎯 <b>Take Profit:</b>
+   • TP1: $${tp1.toFixed(2)}
+   • TP2: $${tp2.toFixed(2)}
+   • TP3: $${tp3.toFixed(2)}
+🛑 <b>Stop Loss:</b> $${signal.sl.toFixed(2)}${signal.liquidityZoneUsed ? ' (за зоной ликвидности)' : ''}
 
-━━━━━━━━━━━━━━━━━━━━
-💰 <b>ВХОД:</b> <code>${entryLow.toFixed(6)}–${entryHigh.toFixed(6)}</code>
-🛑 <b>СТОП:</b> <code>${signal.signal === 'LONG' ? slDescription : slDescriptionShort}</code>
-🎯 <b>ТЕЙКИ:</b>
-   • <b>TP1:</b> <code>${tp1.toFixed(6)}</code>
-   • <b>TP2:</b> <code>${tp2.toFixed(6)}</code>
-   • <b>TP3:</b> <code>${tp3.toFixed(6)}</code>
+📊 <b>R:R Ratio:</b> 1:${signal.rrRatio}
+🎲 <b>Confidence:</b> ${signal.confidence}%
+🏆 <b>Quality:</b> ${signal.qualityScore}/10
 
-━━━━━━━━━━━━━━━━━━━━
-📈 <b>ИНДИКАТОРЫ:</b>
-   📍 ${emaStatus}
-   📍 RSI ${rsiStatus}
-   📍 Объёмы ${volumeStatus}
-   📍 MACD ${macdStatus}
-   📍 ADX ${signal.indicators.adx} | Stoch ${signal.indicators.stochK}
+📈 RSI: ${signal.indicators.rsi}${signal.indicators.rsi < 30 ? ' (выход из перепроданности)' : signal.indicators.rsi > 70 ? ' (выход из перекупленности)' : ''} | Stoch K: ${signal.indicators.stochK}
+📊 Volatility: ${signal.indicators.volatility}% | ADX: ${signal.indicators.adx}
+🔧 ATR: ${signal.indicators.atr}
 
-━━━━━━━━━━━━━━━━━━━━
-${setupEmoji} <b>ОЦЕНКА:</b> ${setupText} <b>(≈ ${signal.confidence}%)</b>
-${riskEmoji} <b>РИСК:</b> ${riskText} <b>(R:R 1:${signal.rrRatio})</b>
-✔️ <b>СТАТУС:</b> активен до пробоя <code>${signal.sl.toFixed(6)}</code>
+🔍 <b>Confirmations:</b>
+${signal.confirmations.map(c => `• ${c}`).join('\n')}
 
-━━━━━━━━━━━━━━━━━━━━
-💬 <b>КОММЕНТАРИЙ:</b>
-<i>${comment}</i>
+💬 ${comment}
 
-━━━━━━━━━━━━━━━━━━━━
 🏦 ${signal.exchange} | ⏰ ${signal.timestamp.toLocaleString('ru-RU', { hour: '2-digit', minute: '2-digit' })}
     `.trim();
     
