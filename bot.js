@@ -26,7 +26,7 @@ const CONFIG = {
   minVolume: 30000000,        // $30M минимальный объем
   minMarketCap: 300000000,    // $300M минимальная капитализация
   minConfidence: 60,          // 60% минимальная уверенность
-  minQualityScore: 4,         // 4/10 минимальное качество
+  minQualityScore: 6,         // 4/10 минимальное качество
   minRRRatio: 3.0,            // 1:2 минимальное соотношение риск/прибыль
   
   // Критерии уровней
@@ -122,7 +122,7 @@ function calculateEMA(prices, period) {
   return ema;
 }
 
-function calculateRSI(prices, period = 14) {
+function calculateRSI(prices, period = 9) {
   if (prices.length < period + 1) return 50;
   
   let gains = 0;
@@ -154,7 +154,7 @@ function calculateMACD(prices) {
   return { macd, signal, histogram };
 }
 
-function calculateBollingerBands(prices, period = 20) {
+function calculateBollingerBands(prices, period = 12) {
   if (prices.length < period) return { upper: null, middle: null, lower: null };
   
   const sma = calculateSMA(prices, period);
@@ -169,7 +169,7 @@ function calculateBollingerBands(prices, period = 20) {
   };
 }
 
-function calculateVolatility(prices, period = 20) {
+function calculateVolatility(prices, period = 12) {
   if (prices.length < period) return 0;
   
   const recentPrices = prices.slice(-period);
