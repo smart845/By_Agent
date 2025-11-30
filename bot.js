@@ -639,7 +639,7 @@ async function sendSignalToTelegram(signal) {
     const comment = generateTraderComment(signal);
     
     const message = `
-<b>${tierEmoji}═══════════ ${tierText} ═══════════${tierEmoji}</b>
+<b>${tierEmoji}${tierText}${tierEmoji}</b>
 
 ${directionEmoji} <b>${signal.signal} ${signal.pair}</b>
 
