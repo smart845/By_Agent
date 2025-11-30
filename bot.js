@@ -20,14 +20,14 @@ console.log('🔑 CoinGecko API Key:', COINGECKO_API_KEY ? 'УСТАНОВЛЕН
 const CONFIG = {
   // CoinGecko API
   apiUrl: 'https://api.coingecko.com/api/v3',
-  topCoins: 50,
+  topCoins: 250,
   
   // Фильтры
   minVolume: 30000000,        // $30M минимальный объем
   minMarketCap: 300000000,    // $300M минимальная капитализация
   minConfidence: 60,          // 60% минимальная уверенность
   minQualityScore: 4,         // 4/10 минимальное качество
-  minRRRatio: 2.0,            // 1:2 минимальное соотношение риск/прибыль
+  minRRRatio: 3.0,            // 1:2 минимальное соотношение риск/прибыль
   
   // Критерии уровней
   godTier: {
@@ -251,9 +251,9 @@ function analyzeSignal(coin, priceHistory) {
   
   // LONG сигнал
   if (
-    (rsi < 35 && macd.histogram > 0) ||
-    (price < bb.lower && rsi < 40) ||
-    (rsi < 30 && sma20 > sma50)
+    (rsi < 30 && macd.histogram > 0) ||
+    (price < bb.lower && rsi < 35) ||
+    (rsi < 25 && sma20 > sma50)
   ) {
     signal = 'LONG';
     const trendBonus = sma20 > sma50 ? 1.15 : 1.0;
