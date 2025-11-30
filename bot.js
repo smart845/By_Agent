@@ -684,33 +684,52 @@ async function sendSignalToTelegram(signal) {
       macdStatus = 'нейтральный';
     }
     
+    // Эмодзи для направления сигнала
+    const directionEmoji = signal.signal === 'LONG' ? '🟢' : '🔴';
+    const directionText = signal.signal === 'LONG' ? '<b>LONG ⬆️</b>' : '<b>SHORT ⬇️</b>';
+    
+    // Эмодзи для оценки сетапа
+    const setupEmoji = signal.confidence >= 80 ? '🔥' : signal.confidence >= 65 ? '⚡' : '⚠️';
+    const setupText = signal.confidence >= 80 ? '<b>высокая</b>' : signal.confidence >= 65 ? '<b>средняя</b>' : 'низкая';
+    
+    // Эмодзи для риска
+    const riskEmoji = signal.rrRatio >= 4 ? '✅' : '⚖️';
+    const riskText = signal.rrRatio >= 4 ? '<b>низкий</b>' : 'умеренный';
+    
     const message = `
 ${tierEmoji} <b>${signal.tier}</b>
+━━━━━━━━━━━━━━━━━━━━
 
-<b>АКТИВ:</b> ${signal.pair}
-<b>ТИП СИГНАЛА:</b> ${signal.signal}
-<b>ТАЙМФРЕЙМ:</b> M5
+${directionEmoji} <b>АКТИВ:</b> <b>${signal.pair}</b>
+📊 <b>ТИП:</b> ${directionText}
+⏱ <b>ТАЙМФРЕЙМ:</b> M5
 
-<b>ВХОД:</b> ${entryLow.toFixed(6)}–${entryHigh.toFixed(6)}
-<b>СТОП:</b> ${signal.signal === 'LONG' ? slDescription : slDescriptionShort}
-<b>ТЕЙКИ:</b>
- • TP1: ${tp1.toFixed(6)}
- • TP2: ${tp2.toFixed(6)}
- • TP3: ${tp3.toFixed(6)}
+━━━━━━━━━━━━━━━━━━━━
+💰 <b>ВХОД:</b> <code>${entryLow.toFixed(6)}–${entryHigh.toFixed(6)}</code>
+🛑 <b>СТОП:</b> <code>${signal.signal === 'LONG' ? slDescription : slDescriptionShort}</code>
+🎯 <b>ТЕЙКИ:</b>
+   • <b>TP1:</b> <code>${tp1.toFixed(6)}</code>
+   • <b>TP2:</b> <code>${tp2.toFixed(6)}</code>
+   • <b>TP3:</b> <code>${tp3.toFixed(6)}</code>
 
-<b>ИНДИКАТОРЫ:</b>
- • ${emaStatus}
- • RSI ${rsiStatus}
- • Объёмы ${volumeStatus}
- • MACD ${macdStatus}
- • ADX ${signal.indicators.adx} | Stoch ${signal.indicators.stochK}
+━━━━━━━━━━━━━━━━━━━━
+📈 <b>ИНДИКАТОРЫ:</b>
+   📍 ${emaStatus}
+   📍 RSI ${rsiStatus}
+   📍 Объёмы ${volumeStatus}
+   📍 MACD ${macdStatus}
+   📍 ADX ${signal.indicators.adx} | Stoch ${signal.indicators.stochK}
 
-<b>ОЦЕНКА СЕТАПА:</b> ${signal.confidence >= 80 ? 'высокая' : signal.confidence >= 65 ? 'средняя' : 'низкая'} (≈ ${signal.confidence}%)
-<b>РИСК:</b> ${signal.rrRatio >= 4 ? 'низкий' : 'умеренный'} (R:R 1:${signal.rrRatio})
-<b>СТАТУС:</b> активен до ${signal.signal === 'LONG' ? 'пробоя' : 'пробоя'} ${signal.sl.toFixed(6)}
+━━━━━━━━━━━━━━━━━━━━
+${setupEmoji} <b>ОЦЕНКА:</b> ${setupText} <b>(≈ ${signal.confidence}%)</b>
+${riskEmoji} <b>РИСК:</b> ${riskText} <b>(R:R 1:${signal.rrRatio})</b>
+✔️ <b>СТАТУС:</b> активен до пробоя <code>${signal.sl.toFixed(6)}</code>
 
-<b>КОММЕНТАРИЙ:</b> ${comment}
+━━━━━━━━━━━━━━━━━━━━
+💬 <b>КОММЕНТАРИЙ:</b>
+<i>${comment}</i>
 
+━━━━━━━━━━━━━━━━━━━━
 🏦 ${signal.exchange} | ⏰ ${signal.timestamp.toLocaleString('ru-RU', { hour: '2-digit', minute: '2-digit' })}
     `.trim();
     
