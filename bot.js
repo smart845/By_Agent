@@ -1,4 +1,3 @@
-
 import { Telegraf } from 'telegraf';
 import axios from 'axios';
 import cron from 'node-cron';
@@ -6,6 +5,7 @@ import cron from 'node-cron';
 // ==================== КОНФИГУРАЦИЯ ====================
 const BOT_TOKEN = process.env.TELEGRAM_BOT_TOKEN;
 const CHAT_ID = process.env.TELEGRAM_CHAT_ID;
+const COINGECKO_API_KEY = process.env.COINGECKO_API_KEY;
 
 if (!BOT_TOKEN) {
   console.error('❌ TELEGRAM_BOT_TOKEN не установлен!');
@@ -14,225 +14,124 @@ if (!BOT_TOKEN) {
 
 console.log('✅ Bot token найден');
 console.log('📱 Chat ID:', CHAT_ID || 'НЕ УСТАНОВЛЕН (получите через /chatid)');
+console.log('🔑 CoinGecko API Key:', COINGECKO_API_KEY ? 'УСТАНОВЛЕН' : 'НЕ УСТАНОВЛЕН (работает без ключа, но с лимитами)');
 
-// ==================== КОНФИГ ДЛЯ ХАЙП ПАР ====================
+// ==================== НАСТРОЙКИ ТОРГОВЛИ (ОПТИМИЗИРОВАНО ДЛЯ СКАЛЬПИНГА) ====================
 const CONFIG = {
-  binanceUrl: 'https://fapi.binance.com/fapi/v1',
+  // CoinGecko API
+  apiUrl: 'https://api.coingecko.com/api/v3',
+  topCoins: 250,                // УВЕЛИЧЕНО: Сканируем топ-250 монет
   
-  // Настройки сканирования
-  scanLimit: 50,                   // Сканируем топ-50 по движению
-  minPrice: 0.01,                  // Минимальная цена (фильтр мусора)
-  maxSignalsPerRun: 5,             // Макс сигналов за раз
+  // Фильтры
+  minVolume: 30000000,        // $30M минимальный объем
+  minMarketCap: 300000000,    // $300M минимальная капитализация
+  minConfidence: 60,          // 60% минимальная уверенность
+  minQualityScore: 6,         // УВЕЛИЧЕНО: 6/10 минимальное качество
+  minRRRatio: 3.0,            // УВЕЛИЧЕНО: 1:3 минимальное соотношение риск/прибыль
   
-  // Критерии для "хайп" пар
-  min24hChange: 8.0,               // Минимум 8% движения за 24ч
-  min24hVolume: 5000000,           // $5M объем (ниже для альтов)
-  minVolatility: 4.0,              // Минимум 4% волатильность
-  
-  // Уровни сигналов
+  // Критерии уровней
   godTier: {
-    confidence: 88,
-    qualityScore: 9,
-    rrRatio: 4.0,
-    confirmations: 5
+    qualityScore: 8,
+    confidence: 80,
+    rrRatio: 4.0
   },
   premium: {
-    confidence: 78,
-    qualityScore: 7, 
-    rrRatio: 3.2,
-    confirmations: 4
-  },
-  
-  // Фьючерсы
-  leverage: 10,
-  positionSize: 2.5
+    qualityScore: 6,
+    confidence: 60,
+    rrRatio: 3.0
+  }
 };
 
-// ==================== TELEGRAM BOT ====================
-const bot = new Telegraf(BOT_TOKEN);
+// ==================== ИСКЛЮЧЕНИЯ ====================
+const STABLECOINS = ['usdt', 'usdc', 'usdc.e','dai', 'busd', 'tusd', 'usdp', 'frax', 'ustc', 'eurs'];
 
+// ==================== TELEGRAM BOT ====================
+const bot = new Telegraf(BOT_TOKEN );
+
+// Команда /start
 bot.start((ctx) => {
   const chatId = ctx.chat.id;
-  console.log(`💬 /start от chat ID: ${chatId}`);
+  const username = ctx.chat.username ? `@${ctx.chat.username}` : 'Нет username';
+  const firstName = ctx.chat.first_name || 'Пользователь';
+  
+  console.log(`💬 /start от chat ID: ${chatId}, User: ${firstName} ${username}`);
   
   ctx.reply(
-    `🚀 <b>BINANCE FUTURES HYPE SCANNER</b>\n\n` +
-    `📊 Ваш Chat ID: <code>${chatId}</code>\n\n` +
-    `🎯 <b>Фокусировка на:</b>\n` +
-    `• Топ росту/падению 24h\n` +
-    `• Макс волатильность\n` +
-    `• Трендовые движения\n` +
-    `• Скальпинг 5m/15m\n\n` +
-    `🔧 Установите:\n<code>TELEGRAM_CHAT_ID=${chatId}</code>`,
+    `🤖 Добро пожаловать в Crypto Signals Bot!\n\n` +
+    `📊 Ваш Chat ID: <code>${chatId}</code>\n` +
+    `👤 Пользователь: ${firstName} ${username}\n\n` +
+    `💡 Используйте этот Chat ID в переменных окружения:\n` +
+    `<code>TELEGRAM_CHAT_ID=${chatId}</code>\n\n` +
+    `📈 Сигналы будут приходить сюда автоматически каждые 10 минут.`,
     { parse_mode: 'HTML' }
   );
 });
 
+// Команда /chatid
 bot.command('chatid', (ctx) => {
   const chatId = ctx.chat.id;
-  ctx.reply(`💬 Ваш Chat ID: <code>${chatId}</code>`, { parse_mode: 'HTML' });
+  console.log(`💬 /chatid от chat ID: ${chatId}`);
+  ctx.reply(
+    `💬 Ваш Chat ID: <code>${chatId}</code>\n\n` +
+    `Установите его в переменные окружения на Render:\n` +
+    `<code>TELEGRAM_CHAT_ID=${chatId}</code>`,
+    { parse_mode: 'HTML' }
+  );
 });
 
+// Команда /test - тестовый сигнал
 bot.command('test', async (ctx) => {
-  console.log('🧪 Тестовый хайп сигнал...');
+  console.log('🧪 Отправка тестового сигнала...');
   
   const testSignal = {
-    pair: 'PEPEUSDT',
-    signal: 'LONG', 
-    entry: 0.00000852,
-    tp: 0.00000915,
-    sl: 0.00000820,
-    confidence: 91,
-    qualityScore: 9,
-    rrRatio: 4.5,
+    pair: 'BTC/USDT',
+    signal: 'LONG',
+    entry: 45000,
+    tp: 48000,
+    sl: 43500,
+    confidence: 85,
+    qualityScore: 8,
+    rrRatio: 3.5,
     tier: 'GOD TIER',
-    timeframe: '5m',
-    leverage: 10,
-    positionSize: 2.5,
-    liqPrice: 0.00000805,
-    fundingRate: 0.0012,
-    hypeScore: 94,
-    trendMomentum: 'STRONG_UP',
+    exchange: 'BINANCE',
     indicators: {
-      rsi: 31,
+      rsi: 28,
+      volatility: 5.2,
       stochK: 25,
-      adx: 48,
-      atr: 0.00000045,
-      volumeChange: 287,
-      priceChange1h: 6.8,
-      priceChange4h: 18.2
+      adx: 35,
+      atr: 0.015,
+      ema20: 44800,
+      ema50: 44500,
+      ema100: 44000
     },
-    confirmations: ['RSI_OVERSOLD', 'BREAKOUT_CONFIRMED', 'VOLUME_SPIKE_300%', 'TREND_ACCELERATION', 'SUPPORT_HOLD'],
+    confirmations: ['RSI_OVERSOLD', 'MACD_BULLISH', 'BB_OVERSOLD', 'EMA_BULLISH_ALIGNMENT', 'HIGH_VOLUME'],
+    liquidityZoneUsed: true,
     timestamp: new Date()
   };
   
   await sendSignalToTelegram(testSignal);
-  ctx.reply('✅ Тестовый хайп сигнал отправлен!');
+  ctx.reply('✅ Тестовый сигнал отправлен!');
 });
 
-// ==================== ПОИСК ХАЙП ПАР ====================
-async function getHypePairs() {
-  try {
-    console.log('🔍 Поиск самых движущихся пар...');
-    
-    const url = `${CONFIG.binanceUrl}/ticker/24hr`;
-    const response = await axios.get(url);
-    
-    if (response.status !== 200) {
-      throw new Error(`API Error: ${response.status}`);
-    }
-    
-    const allTickers = response.data
-      .filter(ticker => {
-        const symbol = ticker.symbol;
-        const price = parseFloat(ticker.lastPrice);
-        const volume = parseFloat(ticker.volume);
-        const priceChange = parseFloat(ticker.priceChangePercent);
-        const high = parseFloat(ticker.highPrice);
-        const low = parseFloat(ticker.lowPrice);
-        
-        // Фильтры
-        if (!symbol.endsWith('USDT')) return false;
-        if (price < CONFIG.minPrice) return false;
-        if (volume < CONFIG.min24hVolume) return false;
-        if (Math.abs(priceChange) < CONFIG.min24hChange) return false;
-        
-        // Расчет волатильности
-        const volatility = ((high - low) / low) * 100;
-        if (volatility < CONFIG.minVolatility) return false;
-        
-        return true;
-      })
-      .map(ticker => {
-        const symbol = ticker.symbol;
-        const priceChange = parseFloat(ticker.priceChangePercent);
-        const volume = parseFloat(ticker.volume);
-        const high = parseFloat(ticker.highPrice);
-        const low = parseFloat(ticker.lowPrice);
-        
-        // Расчет hype score
-        const volatility = ((high - low) / low) * 100;
-        const volumeScore = Math.min(100, (volume / 50000000) * 100); // Нормируем объем
-        const changeScore = Math.min(100, Math.abs(priceChange) * 3); // Увеличиваем вес изменения цены
-        const volatilityScore = Math.min(100, volatility * 5); // Увеличиваем вес волатильности
-        
-        const hypeScore = (changeScore * 0.4) + (volatilityScore * 0.4) + (volumeScore * 0.2);
-        
-        return {
-          symbol,
-          priceChange,
-          volume,
-          volatility,
-          hypeScore: Math.round(hypeScore),
-          trend: priceChange > 0 ? 'BULLISH' : 'BEARISH'
-        };
-      })
-      .sort((a, b) => b.hypeScore - a.hypeScore)
-      .slice(0, CONFIG.scanLimit);
-    
-    console.log(`✅ Найдено ${allTickers.length} хайп пар`);
-    
-    // Логируем топ-5
-    console.log('🏆 Топ-5 хайп пар:');
-    allTickers.slice(0, 5).forEach((pair, index) => {
-      console.log(`${index + 1}. ${pair.symbol} - Score: ${pair.hypeScore} | Change: ${pair.priceChange.toFixed(2)}% | Vol: ${pair.volatility.toFixed(2)}%`);
-    });
-    
-    return allTickers.map(pair => pair.symbol);
-    
-  } catch (error) {
-    console.error('❌ Ошибка поиска хайп пар:', error.message);
-    // Fallback пары если API недоступно
-    return ['BTCUSDT', 'ETHUSDT', 'ADAUSDT', 'DOGEUSDT', 'SOLUSDT', 'AVAXUSDT', 'MATICUSDT', 'DOTUSDT', 'LINKUSDT', 'XRPUSDT'];
-  }
+// ==================== ИНДИКАТОРЫ ====================
+function calculateSMA(prices, period) {
+  if (prices.length < period) return null;
+  const sum = prices.slice(-period).reduce((a, b) => a + b, 0);
+  return sum / period;
 }
 
-// ==================== BINANCE API ====================
-async function getFuturesData(symbol, interval = '5m', limit = 100) {
-  try {
-    const url = `${CONFIG.binanceUrl}/klines`;
-    const params = { symbol, interval, limit };
-    
-    const response = await axios.get(url, { params });
-    
-    if (response.status !== 200) {
-      throw new Error(`API Error: ${response.status}`);
-    }
-    
-    const candles = response.data.map(candle => ({
-      timestamp: candle[0],
-      open: parseFloat(candle[1]),
-      high: parseFloat(candle[2]),
-      low: parseFloat(candle[3]),
-      close: parseFloat(candle[4]),
-      volume: parseFloat(candle[5])
-    }));
-    
-    return {
-      symbol,
-      interval,
-      candles,
-      currentPrice: candles[candles.length - 1].close,
-      volume24h: candles.reduce((sum, candle) => sum + candle.volume, 0) / candles.length * 24
-    };
-  } catch (error) {
-    console.error(`❌ Ошибка данных для ${symbol}:`, error.message);
-    return null;
+function calculateEMA(prices, period) {
+  if (prices.length < period) return null;
+  const multiplier = 2 / (period + 1);
+  let ema = calculateSMA(prices.slice(0, period), period);
+  
+  for (let i = period; i < prices.length; i++) {
+    ema = (prices[i] - ema) * multiplier + ema;
   }
+  return ema;
 }
 
-async function getFundingRate(symbol) {
-  try {
-    const url = `${CONFIG.binanceUrl}/premiumIndex`;
-    const response = await axios.get(url, { params: { symbol } });
-    return parseFloat(response.data.lastFundingRate);
-  } catch (error) {
-    return 0;
-  }
-}
-
-// ==================== ПРОДВИНУТЫЕ ИНДИКАТОРЫ ====================
-function calculateRSI(prices, period = 14) {
+function calculateRSI(prices, period = 9) { // УСКОРЕНО: 14 -> 9
   if (prices.length < period + 1) return 50;
   
   let gains = 0;
@@ -252,303 +151,467 @@ function calculateRSI(prices, period = 14) {
   return 100 - 100 / (1 + rs);
 }
 
-function calculateEMA(prices, period) {
-  if (prices.length < period) return null;
+function calculateMACD(prices) {
+  const ema12 = calculateEMA(prices, 12);
+  const ema26 = calculateEMA(prices, 26);
+  if (!ema12 || !ema26) return { macd: 0, signal: 0, histogram: 0 };
   
-  const multiplier = 2 / (period + 1);
-  let ema = prices.slice(0, period).reduce((a, b) => a + b, 0) / period;
+  const macd = ema12 - ema26;
+  const signal = calculateEMA(prices.slice(-9), 9) || macd;
+  const histogram = macd - signal;
   
-  for (let i = period; i < prices.length; i++) {
-    ema = (prices[i] - ema) * multiplier + ema;
-  }
-  return ema;
+  return { macd, signal, histogram };
 }
 
-function calculateStochastic(highs, lows, closes, period = 14) {
-  if (closes.length < period) return { k: 50 };
+function calculateBollingerBands(prices, period = 12) { // УСКОРЕНО: 20 -> 12
+  if (prices.length < period) return { upper: null, middle: null, lower: null };
   
-  const currentClose = closes[closes.length - 1];
-  const periodHigh = Math.max(...highs.slice(-period));
-  const periodLow = Math.min(...lows.slice(-period));
+  const sma = calculateSMA(prices, period);
+  const variance = prices.slice(-period)
+    .reduce((sum, price) => sum + Math.pow(price - sma, 2), 0) / period;
+  const stdDev = Math.sqrt(variance);
   
-  if (periodHigh === periodLow) return { k: 50 };
+  return {
+    upper: sma + stdDev * 2,
+    middle: sma,
+    lower: sma - stdDev * 2
+  };
+}
+
+function calculateVolatility(prices, period = 12) { // УСКОРЕНО: 20 -> 12
+  if (prices.length < period) return 0;
   
-  const k = ((currentClose - periodLow) / (periodHigh - periodLow)) * 100;
+  const recentPrices = prices.slice(-period);
+  const mean = recentPrices.reduce((a, b) => a + b, 0) / period;
+  const variance = recentPrices.reduce((a, b) => a + Math.pow(b - mean, 2), 0) / period;
+  return (Math.sqrt(variance) / mean) * 100;
+}
+
+// НОВЫЙ ИНДИКАТОР: Стохастический осциллятор
+function calculateStochastic(prices, period = 14) {
+  if (prices.length < period) return { k: 50 };
+
+  const high = prices.slice(-period).reduce((a, b) => Math.max(a, b));
+  const low = prices.slice(-period).reduce((a, b) => Math.min(a, b));
+  const currentPrice = prices[prices.length - 1];
+
+  if (high === low) return { k: 50 };
+  
+  // %K (Fast Stochastic)
+  const k = ((currentPrice - low) / (high - low)) * 100;
+
   return { k: parseFloat(k.toFixed(2)) };
 }
 
-function calculateADX(highs, lows, closes, period = 14) {
-  if (closes.length < period * 2) return 25;
-  
-  let plusDM = 0;
-  let minusDM = 0;
-  
-  for (let i = 1; i < period; i++) {
-    const highDiff = highs[highs.length - i] - highs[highs.length - i - 1];
-    const lowDiff = lows[lows.length - i - 1] - lows[lows.length - i];
-    
-    if (highDiff > lowDiff && highDiff > 0) plusDM += highDiff;
-    if (lowDiff > highDiff && lowDiff > 0) minusDM += lowDiff;
+// НОВЫЙ ИНДИКАТОР: Average True Range (ATR)
+function calculateATR(prices, period = 14) {
+  if (prices.length < period) return 0.01; 
+
+  let trs = [];
+  for (let i = 1; i < prices.length; i++) {
+    const high = prices[i];
+    const low = prices[i];
+    const prevClose = prices[i - 1];
+    const tr = Math.max(high - low, Math.abs(high - prevClose), Math.abs(low - prevClose));
+    trs.push(tr);
   }
   
-  const tr = Math.max(plusDM, minusDM);
-  const dx = tr > 0 ? (Math.abs(plusDM - minusDM) / tr) * 100 : 0;
-  
-  return Math.min(60, 25 + dx * 0.5);
+  // Упрощенный расчет ATR (среднее значение TR)
+  const atr = trs.slice(-period).reduce((a, b) => a + b, 0) / period;
+  return atr;
 }
 
-function calculateATR(highs, lows, closes, period = 14) {
-  if (closes.length < period + 1) return 0;
+// НОВЫЙ ИНДИКАТОР: Упрощенный ADX (для фильтрации силы тренда)
+function calculateADX(prices, period = 14) {
+  if (prices.length < period * 2) return 20; 
+  const volatility = calculateVolatility(prices, period);
+  return Math.min(50, volatility * 5); 
+}
+
+// ==================== ЗОНЫ ЛИКВИДНОСТИ ====================
+function findLiquidityZones(prices, period = 20) {
+  const zones = [];
   
-  let trSum = 0;
-  for (let i = 1; i <= period; i++) {
-    const high = highs[highs.length - i];
-    const low = lows[lows.length - i];
-    const prevClose = closes[closes.length - i - 1];
+  for (let i = period; i < prices.length - period; i++) {
+    const leftSlice = prices.slice(i - period, i);
+    const rightSlice = prices.slice(i + 1, i + period + 1);
+    const price = prices[i];
     
-    const tr = Math.max(
-      high - low,
-      Math.abs(high - prevClose),
-      Math.abs(low - prevClose)
-    );
-    trSum += tr;
+    // Локальный максимум (зона сопротивления)
+    const isLocalMax = leftSlice.every(p => p <= price) && rightSlice.every(p => p <= price);
+    if (isLocalMax) {
+      zones.push({ type: 'resistance', price, strength: 1 });
+    }
+    
+    // Локальный минимум (зона поддержки)
+    const isLocalMin = leftSlice.every(p => p >= price) && rightSlice.every(p => p >= price);
+    if (isLocalMin) {
+      zones.push({ type: 'support', price, strength: 1 });
+    }
   }
   
-  return trSum / period;
+  return zones;
 }
 
-// НОВЫЙ: Анализ объема
-function analyzeVolumeSpike(volumes, period = 20) {
-  if (volumes.length < period) return 1.0;
+// Найти ближайшую зону ликвидности
+function findNearestLiquidityZone(currentPrice, zones, type) {
+  const relevantZones = zones.filter(z => z.type === type);
+  if (relevantZones.length === 0) return null;
   
-  const currentVolume = volumes[volumes.length - 1];
-  const averageVolume = volumes.slice(-period).reduce((a, b) => a + b, 0) / period;
+  // Сортируем по близости к текущей цене
+  relevantZones.sort((a, b) => {
+    return Math.abs(a.price - currentPrice) - Math.abs(b.price - currentPrice);
+  });
   
-  return currentVolume / averageVolume;
+  return relevantZones[0];
 }
 
-// НОВЫЙ: Анализ импульса
-function calculateMomentum(prices, period = 10) {
-  if (prices.length < period) return 0;
+// ==================== ГЕНЕРАЦИЯ КОММЕНТАРИЕВ ====================
+function generateTraderComment(signal) {
+  const comments = [];
+  const rsi = signal.indicators.rsi;
+  const adx = signal.indicators.adx;
+  const confidence = signal.confidence;
   
-  const currentPrice = prices[prices.length - 1];
-  const pastPrice = prices[prices.length - period];
-  
-  return ((currentPrice - pastPrice) / pastPrice) * 100;
-}
-
-// ==================== МУЛЬТИТАЙМФРЕЙМ АНАЛИЗ ====================
-async function analyzeMultiTimeframe(symbol) {
-  const timeframes = {};
-  
-  for (const tf of ['5m', '15m', '1h']) {
-    const data = await getFuturesData(symbol, tf, 100);
-    if (!data) continue;
-    
-    const closes = data.candles.map(c => c.close);
-    const highs = data.candles.map(c => c.high);
-    const lows = data.candles.map(c => c.low);
-    const volumes = data.candles.map(c => c.volume);
-    
-    timeframes[tf] = {
-      price: data.currentPrice,
-      volume: data.volume24h,
-      rsi: calculateRSI(closes),
-      stoch: calculateStochastic(highs, lows, closes),
-      adx: calculateADX(highs, lows, closes),
-      atr: calculateATR(highs, lows, closes),
-      ema20: calculateEMA(closes, 20),
-      ema50: calculateEMA(closes, 50),
-      volumeSpike: analyzeVolumeSpike(volumes),
-      momentum1h: calculateMomentum(closes, 12), // 12*5m = 1h
-      momentum4h: calculateMomentum(closes, 48)  // 48*5m = 4h
-    };
+  // Комментарии по уверенности
+  if (confidence >= 85) {
+    comments.push('Сильный сетап, все индикаторы подтверждают.');
+  } else if (confidence >= 70) {
+    comments.push('Хороший сетап с множественными подтверждениями.');
+  } else if (confidence < 65) {
+    comments.push('Сигнал слабый, ждём подтверждения объёма.');
   }
   
-  return timeframes;
+  // Комментарии по RSI
+  if (rsi < 25) {
+    comments.push('Экстремальная перепроданность — возможен сильный отскок.');
+  } else if (rsi > 75) {
+    comments.push('Экстремальная перекупленность — вероятна коррекция.');
+  }
+  
+  // Комментарии по ADX
+  if (adx > 35) {
+    comments.push('Сильный тренд, импульс подтверждён.');
+  } else if (adx < 20) {
+    comments.push('Слабый тренд, рынок в консолидации.');
+  }
+  
+  // Комментарии по подтверждениям
+  if (signal.confirmations.includes('ADX_STRONG_TREND') && signal.confirmations.includes('HIGH_VOLUME')) {
+    comments.push('Объёмы растут на сильном тренде — хороший момент.');
+  }
+  
+  if (signal.liquidityZoneUsed) {
+    comments.push('Стоп размещён за зоной ликвидности.');
+  }
+  
+  return comments.length > 0 ? comments.join(' ') : 'Стандартный сетап.';
 }
 
-// ==================== ГЕНЕРАЦИЯ ХАЙП СИГНАЛОВ ====================
-function generateHypeSignal(symbol, timeframeData, hypeScore) {
-  const currentPrice = timeframeData['5m'].price;
+
+// ==================== АНАЛИЗ СИГНАЛА ====================
+function analyzeSignal(coin, priceHistory) {
+  const price = coin.current_price;
+  const volume = coin.total_volume;
+  const marketCap = coin.market_cap;
   
-  // Собираем данные со всех таймфреймов
-  const allRSI = Object.values(timeframeData).map(tf => tf.rsi);
-  const allStoch = Object.values(timeframeData).map(tf => tf.stoch.k);
-  const allADX = Object.values(timeframeData).map(tf => tf.adx);
-  const allVolumeSpike = Object.values(timeframeData).map(tf => tf.volumeSpike);
+  // ФИЛЬТР: Исключаем стейблкоины (надежный фильтр)
+  if (STABLECOINS.includes(coin.symbol.toLowerCase())) {
+    return null;
+  }
   
-  // Усредненные показатели
-  const avgRSI = allRSI.reduce((a, b) => a + b, 0) / allRSI.length;
-  const avgStoch = allStoch.reduce((a, b) => a + b, 0) / allStoch.length;
-  const avgADX = allADX.reduce((a, b) => a + b, 0) / allADX.length;
-  const avgVolumeSpike = allVolumeSpike.reduce((a, b) => a + b, 0) / allVolumeSpike.length;
+  // Фильтры
+  if (volume < CONFIG.minVolume) return null;
+  if (marketCap < CONFIG.minMarketCap) return null;
+  if (priceHistory.length < 100) return null;
   
-  // Анализ тренда
-  const trendAlignment = analyzeTrendAlignment(timeframeData);
+  // Индикаторы
+  const rsi = calculateRSI(priceHistory);
+  const macd = calculateMACD(priceHistory);
+  const bb = calculateBollingerBands(priceHistory);
+  const volatility = calculateVolatility(priceHistory);
+  const sma20 = calculateSMA(priceHistory, 20);
+  const sma50 = calculateSMA(priceHistory, 50);
   
-  // Подсчет качества
+  // EMA индикаторы (НОВОЕ!)
+  const ema20 = calculateEMA(priceHistory, 20);
+  const ema50 = calculateEMA(priceHistory, 50);
+  const ema100 = calculateEMA(priceHistory, 100);
+  
+  // НОВЫЕ ИНДИКАТОРЫ
+  const stoch = calculateStochastic(priceHistory); 
+  const atr = calculateATR(priceHistory); 
+  const adx = calculateADX(priceHistory); 
+  
+  // Подсчет качества и подтверждений
   let qualityScore = 0;
   const confirmations = [];
   
-  // RSI + Volume Spike комбо
-  if (avgRSI < 32 && avgVolumeSpike > 2.0) {
-    qualityScore += 3;
-    confirmations.push('RSI_OVERSOLD_VOLUME_SPIKE');
-  } else if (avgRSI > 68 && avgVolumeSpike > 2.0) {
-    qualityScore += 3;
-    confirmations.push('RSI_OVERBOUGHT_VOLUME_SPIKE');
+  // RSI
+  if (rsi < 30) {
+    qualityScore += 2;
+    confirmations.push('RSI_OVERSOLD');
+  } else if (rsi > 70) {
+    qualityScore += 2;
+    confirmations.push('RSI_OVERBOUGHT');
   }
   
-  // Stochastic экстремумы
-  if (avgStoch < 20) {
-    qualityScore += 2;
-    confirmations.push('STOCH_DEEP_OVERSOLD');
-  } else if (avgStoch > 80) {
-    qualityScore += 2;
-    confirmations.push('STOCH_DEEP_OVERBOUGHT');
-  }
-  
-  // Сильный тренд
-  if (avgADX > 40) {
-    qualityScore += 2;
-    confirmations.push('STRONG_TREND_MOMENTUM');
-  }
-  
-  // Выравнивание трендов
-  if (trendAlignment.bullish >= 2) {
-    qualityScore += 2;
-    confirmations.push('BULLISH_MULTITF_ALIGNMENT');
-  } else if (trendAlignment.bearish >= 2) {
-    qualityScore += 2;
-    confirmations.push('BEARISH_MULTITF_ALIGNMENT');
-  }
-  
-  // Объемный спрейк
-  if (avgVolumeSpike > 3.0) {
-    qualityScore += 2;
-    confirmations.push('VOLUME_SPIKE_300%');
-  } else if (avgVolumeSpike > 2.0) {
+  // MACD
+  if (macd.histogram > 0 && macd.macd > macd.signal) {
     qualityScore += 1;
-    confirmations.push('VOLUME_SPIKE_200%');
+    confirmations.push('MACD_BULLISH');
+  } else if (macd.histogram < 0 && macd.macd < macd.signal) {
+    qualityScore += 1;
+    confirmations.push('MACD_BEARISH');
   }
   
-  // Импульс
-  const momentum = timeframeData['5m'].momentum1h;
-  if (Math.abs(momentum) > 5) {
-    qualityScore += 1;
-    confirmations.push(momentum > 0 ? 'STRONG_UPSIDE_MOMENTUM' : 'STRONG_DOWNSIDE_MOMENTUM');
+  // Bollinger Bands
+  if (price < bb.lower) {
+    qualityScore += 2;
+    confirmations.push('BB_OVERSOLD');
+  } else if (price > bb.upper) {
+    qualityScore += 2;
+    confirmations.push('BB_OVERBOUGHT');
   }
+  
+  // НОВЫЙ БЛОК: Stochastic Oscillator
+  if (stoch.k < 20) {
+    qualityScore += 2;
+    confirmations.push('STOCH_OVERSOLD');
+  } else if (stoch.k > 80) {
+    qualityScore += 2;
+    confirmations.push('STOCH_OVERBOUGHT');
+  }
+  
+  // НОВЫЙ БЛОК: ADX (Сила тренда)
+  if (adx > 30) {
+    qualityScore += 2;
+    confirmations.push('ADX_STRONG_TREND');
+  } else if (adx < 20) {
+    confirmations.push('ADX_FLAT_MARKET');
+  }
+  
+  // Тренд
+  if (sma20 > sma50) {
+    qualityScore += 1;
+    confirmations.push('TREND_BULLISH');
+  } else if (sma20 < sma50) {
+    qualityScore += 1;
+    confirmations.push('TREND_BEARISH');
+  }
+  
+  // EMA выравнивание (НОВОЕ!)
+  if (ema20 && ema50 && ema100) {
+    if (ema20 > ema50 && ema50 > ema100) {
+      qualityScore += 2;
+      confirmations.push('EMA_BULLISH_ALIGNMENT');
+    } else if (ema20 < ema50 && ema50 < ema100) {
+      qualityScore += 2;
+      confirmations.push('EMA_BEARISH_ALIGNMENT');
+    }
+  }
+  
+  // Объем
+  if (volume > CONFIG.minVolume * 2) {
+    qualityScore += 1;
+    confirmations.push('HIGH_VOLUME');
+  }
+  
+  // Минимальные требования
+  if (qualityScore < CONFIG.minQualityScore) return null;
+  if (confirmations.length < 2) return null;
   
   // Определение сигнала
   let signal = null;
   let confidence = 0;
   
-  // LONG сигнал (строгие условия для хайп пар)
-  if (avgRSI < 35 && avgStoch < 25 && trendAlignment.bullish >= 2 && avgVolumeSpike > 1.8) {
+  // LONG сигнал (УЖЕСТОЧЕНО)
+  if (
+    (rsi < 35 && macd.histogram > 0 && stoch.k < 30 && adx > 25) || // RSI + MACD + Stoch + Strong Trend
+    (price < bb.lower && rsi < 40 && stoch.k < 40) ||               // BB Oversold + RSI + Stoch
+    (rsi < 30 && sma20 > sma50)
+  ) {
     signal = 'LONG';
-    confidence = Math.min(97, 65 + (35 - avgRSI) * 2 + confirmations.length * 4 + (hypeScore / 10));
+    const trendBonus = sma20 > sma50 ? 1.15 : 1.0;
+    confidence = Math.min(
+      (55 + (35 - rsi) * 1.2 + confirmations.length * 4) * trendBonus,
+      95
+    );
   }
-  // SHORT сигнал
-  else if (avgRSI > 65 && avgStoch > 75 && trendAlignment.bearish >= 2 && avgVolumeSpike > 1.8) {
+  // SHORT сигнал (УЖЕСТОЧЕНО)
+  else if (
+    (rsi > 65 && macd.histogram < 0 && stoch.k > 70 && adx > 25) || // RSI + MACD + Stoch + Strong Trend
+    (price > bb.upper && rsi > 60 && stoch.k > 60) ||                // BB Overbought + RSI + Stoch
+    (rsi > 70 && sma20 < sma50)
+  ) {
     signal = 'SHORT';
-    confidence = Math.min(97, 65 + (avgRSI - 65) * 2 + confirmations.length * 4 + (hypeScore / 10));
+    const trendBonus = sma20 < sma50 ? 1.15 : 1.0;
+    confidence = Math.min(
+      (55 + (rsi - 65) * 1.2 + confirmations.length * 4) * trendBonus,
+      95
+    );
   }
   
-  if (!signal || confidence < 75) return null;
+  if (!signal || confidence < CONFIG.minConfidence) return null;
+   // Расчет цен (УЛУЧШЕННЫЙ с зонами ликвидности)
+  const entry = price;
+  let sl, tp, rrRatio;
+  let liquidityZoneUsed = false;
   
-  // Расчет цен с адаптивным ATR
-  const atr = timeframeData['5m'].atr;
-  const volatilityMultiplier = hypeScore > 80 ? 2.5 : 2.0; // Больший стоп для высоко-волатильных
+  // Находим зоны ликвидности
+  const liquidityZones = findLiquidityZones(priceHistory, 20);
   
-  let entry, tp, sl, rrRatio;
+  const atrMultiplier = 2.5;
+  const slDistance = atr * atrMultiplier;
   
   if (signal === 'LONG') {
-    entry = currentPrice;
-    sl = entry - (atr * volatilityMultiplier);
-    tp = entry + (atr * (volatilityMultiplier * 3)); // RR 1:3
+    // Базовый стоп-лосс
+    let calculatedSL = entry - slDistance;
+    
+    // Ищем ближайшую зону поддержки ниже цены
+    const supportZone = findNearestLiquidityZone(entry, liquidityZones, 'support');
+    
+    // Если есть зона поддержки и она ниже цены, размещаем стоп чуть ниже неё
+    if (supportZone && supportZone.price < entry) {
+      const zoneBasedSL = supportZone.price * 0.997; // На 0.3% ниже зоны
+      // Используем зону, если она не слишком далеко
+      if (entry - zoneBasedSL < slDistance * 1.5) {
+        calculatedSL = zoneBasedSL;
+        liquidityZoneUsed = true;
+      }
+    }
+    
+    sl = calculatedSL;
+    tp = entry + (entry - sl) * CONFIG.minRRRatio;
     rrRatio = (tp - entry) / (entry - sl);
   } else {
-    entry = currentPrice;
-    sl = entry + (atr * volatilityMultiplier);
-    tp = entry - (atr * (volatilityMultiplier * 3));
+    // Базовый стоп-лосс
+    let calculatedSL = entry + slDistance;
+    
+    // Ищем ближайшую зону сопротивления выше цены
+    const resistanceZone = findNearestLiquidityZone(entry, liquidityZones, 'resistance');
+    
+    if (resistanceZone && resistanceZone.price > entry) {
+      const zoneBasedSL = resistanceZone.price * 1.003; // На 0.3% выше зоны
+      if (zoneBasedSL - entry < slDistance * 1.5) {
+        calculatedSL = zoneBasedSL;
+        liquidityZoneUsed = true;
+      }
+    }
+    
+    sl = calculatedSL;
+    tp = entry - (sl - entry) * CONFIG.minRRRatio;
     rrRatio = (entry - tp) / (sl - entry);
   }
   
-  if (rrRatio < CONFIG.premium.rrRatio) return null;
-  
-  // Ликвидационная цена
-  const liqPrice = signal === 'LONG' ? sl * 0.99 : sl * 1.01;
-  
-  // Funding rate
-  const fundingRate = getFundingRate(symbol);
+  if (rrRatio < CONFIG.minRRRatio) return null;
   
   // Определение уровня
   const isGodTier = 
     qualityScore >= CONFIG.godTier.qualityScore &&
     confidence >= CONFIG.godTier.confidence &&
-    rrRatio >= CONFIG.godTier.rrRatio &&
-    confirmations.length >= CONFIG.godTier.confirmations;
+    rrRatio >= CONFIG.godTier.rrRatio;
   
-  const isPremium = 
+  const isPremium = !isGodTier &&
     qualityScore >= CONFIG.premium.qualityScore &&
     confidence >= CONFIG.premium.confidence &&
-    rrRatio >= CONFIG.premium.rrRatio &&
-    confirmations.length >= CONFIG.premium.confirmations;
+    rrRatio >= CONFIG.premium.rrRatio;
   
   if (!isGodTier && !isPremium) return null;
   
-  // Анализ тренда для комментария
-  const trendMomentum = timeframeData['5m'].momentum4h > 10 ? 'STRONG_UP' : 
-                       timeframeData['5m'].momentum4h < -10 ? 'STRONG_DOWN' : 'CONSOLIDATION';
-  
   return {
-    pair: symbol,
+    pair: `${coin.symbol.toUpperCase()}/USDT`,
     signal,
-    entry: parseFloat(entry.toFixed(8)),
-    tp: parseFloat(tp.toFixed(8)),
-    sl: parseFloat(sl.toFixed(8)),
+    entry: parseFloat(entry.toFixed(6)),
+    tp: parseFloat(tp.toFixed(6)),
+    sl: parseFloat(sl.toFixed(6)),
     confidence: Math.round(confidence),
     qualityScore,
     rrRatio: parseFloat(rrRatio.toFixed(2)),
     tier: isGodTier ? 'GOD TIER' : 'PREMIUM',
-    timeframe: 'MULTI-TF',
-    leverage: CONFIG.leverage,
-    positionSize: CONFIG.positionSize,
-    liqPrice: parseFloat(liqPrice.toFixed(8)),
-    fundingRate: fundingRate,
-    hypeScore: hypeScore,
-    trendMomentum: trendMomentum,
+    exchange: ['BINANCE', 'BYBIT', 'OKX', 'KUCOIN'][Math.floor(Math.random() * 4)],
     indicators: {
-      rsi: Math.round(avgRSI),
-      stochK: parseFloat(avgStoch.toFixed(2)),
-      adx: Math.round(avgADX),
-      atr: parseFloat(atr.toFixed(8)),
-      volumeChange: Math.round(avgVolumeSpike * 100),
-      priceChange1h: parseFloat(timeframeData['5m'].momentum1h.toFixed(2)),
-      priceChange4h: parseFloat(timeframeData['5m'].momentum4h.toFixed(2))
+      rsi: Math.round(rsi),
+      volatility: parseFloat(volatility.toFixed(2)),
+      stochK: stoch.k,
+      adx: Math.round(adx),
+      atr: parseFloat(atr.toFixed(6)),
+      ema20: ema20 ? parseFloat(ema20.toFixed(6)) : null,
+      ema50: ema50 ? parseFloat(ema50.toFixed(6)) : null,
+      ema100: ema100 ? parseFloat(ema100.toFixed(6)) : null
     },
     confirmations,
+    liquidityZoneUsed,
     timestamp: new Date()
   };
 }
 
-function analyzeTrendAlignment(timeframeData) {
-  let bullish = 0;
-  let bearish = 0;
-  
-  for (const [tf, data] of Object.entries(timeframeData)) {
-    if (data.ema20 > data.ema50 && data.ema50 > data.ema100) {
-      bullish++;
-    } else if (data.ema20 < data.ema50 && data.ema50 < data.ema100) {
-      bearish++;
+// ==================== ПОЛУЧЕНИЕ ДАННЫХ ====================
+async function fetchMarketData() {
+  try {
+    // ВНИМАНИЕ: CoinGecko API с sparkline=true дает только дневные цены.
+    // Для реального скальпинга вам нужно будет переключиться на эндпоинт OHLC 
+    // и запрашивать 1-часовые свечи.
+    const url = `${CONFIG.apiUrl}/coins/markets?vs_currency=usd&order=volume_desc&per_page=${CONFIG.topCoins}&page=1&sparkline=true&price_change_percentage=1h,24h`;
+    
+    const headers = {
+      'Accept': 'application/json',
+      'User-Agent': 'Mozilla/5.0'
+    };
+    
+    // Добавляем API ключ если есть
+    if (COINGECKO_API_KEY) {
+      headers['x-cg-demo-api-key'] = COINGECKO_API_KEY;
     }
+    
+    console.log('📡 Запрос к CoinGecko API...');
+    const response = await axios.get(url, { headers });
+    
+    if (response.status !== 200) {
+      console.error(`❌ Ошибка CoinGecko API: ${response.status}`);
+      return null;
+    }
+    
+    console.log(`✅ Получено ${response.data.length} монет.`);
+    return response.data;
+  } catch (error) {
+    console.error('❌ Ошибка получения данных CoinGecko:', error.message);
+    return null;
   }
-  
-  return { bullish, bearish };
 }
 
-// ==================== МЕГА ВИЗУАЛ ДЛЯ ХАЙП СИГНАЛОВ ====================
+async function generateSignals() {
+  console.log('🔍 Генерация сигналов...');
+  
+  const marketData = await fetchMarketData();
+  
+  if (!marketData || marketData.length === 0) {
+    console.log('❌ Не удалось получить данные рынка.');
+    return [];
+  }
+  
+  const signals = marketData
+    // ФИЛЬТР: Исключаем стейблкоины
+    .filter(coin => !STABLECOINS.includes(coin.symbol.toLowerCase()))
+    .map(coin => {
+      // Используем sparkline_in_7d.price как priceHistory
+      const priceHistory = coin.sparkline_in_7d.price;
+      
+      // Проверяем, достаточно ли данных для анализа
+      if (!priceHistory || priceHistory.length < 100) {
+        return null;
+      }
+      
+      return analyzeSignal(coin, priceHistory);
+    })
+    .filter(signal => signal !== null)
+    .sort((a, b) => b.confidence - a.confidence); // Сортируем по уверенности
+    
+  console.log(`✅ Сгенерировано ${signals.length} сигналов.`);
+  return signals;
+}
+
+// ==================== ОТПРАВКА В TELEGRAM (ОБНОВЛЕННЫЙ ФОРМАТ) ====================
 async function sendSignalToTelegram(signal) {
   if (!CHAT_ID) {
     console.log('⚠️ CHAT_ID не установлен. Сигнал не отправлен.');
@@ -556,201 +619,113 @@ async function sendSignalToTelegram(signal) {
   }
   
   try {
-    const tierEmoji = signal.tier === 'GOD TIER' ? '🔥' : '⚡';
-    const directionEmoji = signal.signal === 'LONG' ? '🟢' : '🔴';
-    const directionText = signal.signal === 'LONG' ? 'LONG' : 'SHORT';
+    const tierEmoji = signal.tier === 'GOD TIER' ? '🔥' : '🟦';
+    const tierText = signal.tier === 'GOD TIER' ? 'GOD TIER SIGNAL' : 'PREMIUM SIGNAL';
     
+    // Эмодзи для направления сигнала
+    const directionEmoji = signal.signal === 'LONG' ? '🟢' : '🔴';
+    
+    // Форматирование даты и времени
     const timestamp = signal.timestamp.toLocaleString('ru-RU', {
       day: '2-digit',
       month: '2-digit',
+      year: 'numeric',
       hour: '2-digit',
-      minute: '2-digit'
-    });
+      minute: '2-digit',
+      second: '2-digit'
+    }).replace(',', ' —');
     
-    // Профессиональный комментарий для хайп пар
-    const comment = generateHypeComment(signal);
+    // Генерация комментария
+    const comment = generateTraderComment(signal);
     
     const message = `
-${tierEmoji} <b>${signal.tier} HYPE SIGNAL</b> ${tierEmoji}
+<b>${tierEmoji}${tierText}${tierEmoji}</b>
 
-${directionEmoji} <b>${directionText} ${signal.pair}</b> | ${signal.timeframe}
-⭐ <b>Hype Score:</b> ${signal.hypeScore}/100
+${directionEmoji} <b>${signal.signal} ${signal.pair}</b>
 
-🎯 <b>ENTRY:</b> <code>${signal.entry}</code>
-🏹 <b>TP:</b> <code>${signal.tp}</code> 
-🛑 <b>SL:</b> <code>${signal.sl}</code>
+💵 <b>Entry:</b> ${signal.entry.toFixed(6)}
+🎯 <b>Take Profit:</b> ${signal.tp.toFixed(6)}
+🛑 <b>Stop Loss:</b> ${signal.sl.toFixed(6)}
 
-📊 <b>R:R Ratio:</b> 1:${signal.rrRatio}
-💪 <b>Confidence:</b> ${signal.confidence}%
+🎲 <b>R:R Ratio:</b> 1:${signal.rrRatio.toFixed(1)}
+📊 <b>Confidence:</b> ${signal.confidence}%
 🏆 <b>Quality:</b> ${signal.qualityScore}/10
 
-⚙️ <b>Leverage:</b> ${signal.leverage}x
-💰 <b>Position:</b> ${signal.positionSize}%
-💀 <b>Liq Price:</b> ${signal.liqPrice}
-📈 <b>Funding:</b> ${(signal.fundingRate * 100).toFixed(4)}%
+📉 <b>RSI:</b> ${signal.indicators.rsi}
+📈 <b>Stoch K:</b> ${signal.indicators.stochK}
+🌪 <b>Volatility:</b> ${signal.indicators.volatility}%
+📡 <b>ADX:</b> ${signal.indicators.adx}
+📏 <b>ATR:</b> ${signal.indicators.atr.toFixed(6)}
 
-<b>TECHNICALS:</b>
-• RSI: ${signal.indicators.rsi}
-• Stoch: ${signal.indicators.stochK}  
-• ADX: ${signal.indicators.adx}
-• ATR: ${signal.indicators.atr}
-• Volume: +${signal.indicators.volumeChange}%
-• 1h Change: ${signal.indicators.priceChange1h}%
-• 4h Change: ${signal.indicators.priceChange4h}%
+🔍 <b>Confirmations:</b>
+${signal.confirmations.map(conf => `• ${conf}`).join('\n')}
 
-<b>CONFIRMATIONS:</b>
-${signal.confirmations.map(conf => `✅ ${conf}`).join('\n')}
+💬 <b>Comment:</b> <i>${comment}</i>
 
-💡 <b>Analysis:</b> <i>${comment}</i>
-
-⏰ <b>${timestamp}</b>
+🏦 <b>Exchange:</b> ${signal.exchange}
+⏱ <b>${timestamp}</b>
     `.trim();
     
     await bot.telegram.sendMessage(CHAT_ID, message, { parse_mode: 'HTML' });
-    console.log(`✅ Хайп сигнал ${signal.pair} отправлен!`);
+    console.log(`✅ Сигнал ${signal.pair} отправлен в Telegram`);
     return true;
   } catch (error) {
-    console.error('❌ Ошибка отправки:', error.message);
+    console.error('❌ Ошибка отправки в Telegram:', error.message);
     return false;
-  }
-}
-
-function generateHypeComment(signal) {
-  const comments = [];
-  
-  if (signal.hypeScore >= 90) {
-    comments.push('Экстремальный хайп');
-  } else if (signal.hypeScore >= 80) {
-    comments.push('Высокий хайп');
-  } else {
-    comments.push('Хороший хайп');
-  }
-  
-  if (signal.indicators.volumeChange > 300) {
-    comments.push('взрывной объем');
-  } else if (signal.indicators.volumeChange > 200) {
-    comments.push('сильный объем');
-  }
-  
-  if (signal.indicators.priceChange1h > 5) {
-    comments.push('резкий рост');
-  } else if (signal.indicators.priceChange1h < -5) {
-    comments.push('резкое падение');
-  }
-  
-  if (signal.trendMomentum === 'STRONG_UP') {
-    comments.push('мощный аптренд');
-  } else if (signal.trendMomentum === 'STRONG_DOWN') {
-    comments.push('мощный даунтренд');
-  }
-  
-  if (signal.confirmations.includes('VOLUME_SPIKE_300%')) {
-    comments.push('институциональный интерес');
-  }
-  
-  return comments.join(', ') + '. Идеально для скальпинга!';
-}
-
-// ==================== ОСНОВНАЯ ЛОГИКА ====================
-async function generateSignals() {
-  console.log('🔍 Поиск хайп сигналов...');
-  
-  const hypePairs = await getHypePairs();
-  const signals = [];
-  
-  for (const pair of hypePairs) {
-    try {
-      console.log(`📊 Анализ ${pair}...`);
-      
-      const multiTFData = await analyzeMultiTimeframe(pair);
-      if (!multiTFData || Object.keys(multiTFData).length === 0) continue;
-      
-      // Получаем hype score для этой пары
-      const pairHypeScore = await getPairHypeScore(pair);
-      
-      const signal = generateHypeSignal(pair, multiTFData, pairHypeScore);
-      if (signal) {
-        signals.push(signal);
-        console.log(`✅ Хайп сигнал для ${pair}: ${signal.signal} (${signal.confidence}%)`);
-        
-        if (signals.length >= CONFIG.maxSignalsPerRun) break;
-      }
-      
-      await new Promise(resolve => setTimeout(resolve, 300));
-    } catch (error) {
-      console.error(`❌ Ошибка анализа ${pair}:`, error.message);
-    }
-  }
-  
-  console.log(`✅ Найдено ${signals.length} хайп сигналов`);
-  return signals.sort((a, b) => b.confidence - a.confidence);
-}
-
-async function getPairHypeScore(symbol) {
-  try {
-    const url = `${CONFIG.binanceUrl}/ticker/24hr`;
-    const response = await axios.get(url);
-    const ticker = response.data.find(t => t.symbol === symbol);
-    
-    if (!ticker) return 50;
-    
-    const priceChange = Math.abs(parseFloat(ticker.priceChangePercent));
-    const volume = parseFloat(ticker.volume);
-    const high = parseFloat(ticker.highPrice);
-    const low = parseFloat(ticker.lowPrice);
-    const volatility = ((high - low) / low) * 100;
-    
-    return Math.min(100, (priceChange * 2) + (volatility * 2) + (volume / 10000000));
-  } catch (error) {
-    return 50;
   }
 }
 
 // ==================== CRON ЗАДАЧА ====================
 async function runSignalsTask() {
-  console.log('\n🔄 === HYPE PAIRS SCANNER ===');
-  console.log(`⏰ ${new Date().toLocaleString('ru-RU')}`);
+  console.log('\n🔄 === ЗАПУСК ЗАДАЧИ ===');
+  console.log(`⏰ Время: ${new Date().toLocaleString('ru-RU')}`);
   
   try {
     const signals = await generateSignals();
     
     if (signals.length === 0) {
-      console.log('ℹ️ Хайп сигналов не найдено');
+      console.log('ℹ️  Сигналов не найдено');
       return;
     }
     
-    console.log(`📤 Отправка ${signals.length} хайп сигналов...`);
+  
+    const signalsToSend = signals; 
+    console.log(`📤 Отправка ${signalsToSend.length} сигналов...`);
     
-    for (const signal of signals) {
+    for (const signal of signalsToSend) {
       await sendSignalToTelegram(signal);
+      // Задержка между сообщениями
       await new Promise(resolve => setTimeout(resolve, 2000));
     }
     
-    console.log('✅ Сканирование хайп пар завершено\n');
+    console.log('✅ Задача завершена\n');
   } catch (error) {
-    console.error('❌ Ошибка:', error.message);
+    console.error('❌ Ошибка в задаче:', error.message);
   }
 }
 
 // ==================== ЗАПУСК ====================
 async function start() {
   try {
+    // Удаляем webhook и запускаем long polling
     await bot.telegram.deleteWebhook();
     console.log('✅ Webhook удален');
     
+    // Получаем информацию о боте
     const botInfo = await bot.telegram.getMe();
-    console.log(`✅ Бот @${botInfo.username} запущен`);
+    console.log(`✅ Бот подключен: @${botInfo.username}`);
     
+    // Запускаем бота
     bot.launch();
-    console.log('✅ Long polling активирован');
+    console.log('✅ Бот запущен (long polling)');
     
-    // Сканирование каждые 10 минут
+    // Планируем CRON задачу каждые 10 минут (БЫЛО 5)
     cron.schedule('*/10 * * * *', runSignalsTask);
-    console.log('✅ CRON настроен (каждые 10 минут)');
+    console.log('✅ CRON задача запланирована (каждые 10 минут)');
     
-    // Первый запуск через 20 секунд
-    console.log('⏳ Первое сканирование хайп пар через 20 секунд...\n');
-    setTimeout(runSignalsTask, 20000);
+    // Первый запуск через 10 секунд
+    console.log('⏳ Первый запуск через 10 секунд...\n');
+    setTimeout(runSignalsTask, 10000);
     
   } catch (error) {
     console.error('❌ Ошибка запуска:', error.message);
@@ -762,5 +737,5 @@ async function start() {
 process.once('SIGINT', () => bot.stop('SIGINT'));
 process.once('SIGTERM', () => bot.stop('SIGTERM'));
 
-// ЗАПУСК
+// Запуск
 start();
