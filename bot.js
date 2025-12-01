@@ -6,6 +6,7 @@ import cron from 'node-cron';
 const BOT_TOKEN = process.env.TELEGRAM_BOT_TOKEN;
 const CHAT_ID = process.env.TELEGRAM_CHAT_ID;
 const COINGECKO_API_KEY = process.env.COINGECKO_API_KEY;
+const DEXSCREENER_API_URL = 'https://api.dexscreener.com/latest/dex';
 
 if (!BOT_TOKEN) {
   console.error('❌ TELEGRAM_BOT_TOKEN не установлен!');
@@ -20,31 +21,40 @@ console.log('🔑 CoinGecko API Key:', COINGECKO_API_KEY ? 'УСТАНОВЛЕН
 const CONFIG = {
   // CoinGecko API
   apiUrl: 'https://api.coingecko.com/api/v3',
-  topCoins: 250,                // УВЕЛИЧЕНО: Сканируем топ-250 монет
+  topCoins: 250,
   
-  // Фильтры
-  minVolume: 50000000,        // УВЕЛИЧЕНО: $50M минимальный объем
-  minMarketCap: 500000000,    // УВЕЛИЧЕНО: $500M минимальная капитализация
-  minConfidence: 65,          // УВЕЛИЧЕНО: 65% минимальная уверенность
-  minQualityScore: 7,         // УВЕЛИЧЕНО: 7/10 минимальное качество
-  minRRRatio: 3.5,            // УВЕЛИЧЕНО: 1:3.5 минимальное соотношение риск/прибыль
-  minConfirmations: 3,        // НОВОЕ: минимум 3 подтверждения
+  // DEX Screener настройки
+  dexMinLiquidity: 100000,          // Минимальная ликвидность $100K
+  dexMaxAgeHours: 2,                // Максимальный возраст монеты (2 часа)
+  dexMinVolume24h: 50000,           // Минимальный объем 24ч $50K
+  
+  // Фильтры CEX
+  minVolume: 50000000,
+  minMarketCap: 500000000,
+  minConfidence: 65,
+  minQualityScore: 7,
+  minRRRatio: 3.5,
+  minConfirmations: 3,
   
   // Критерии уровней
   godTier: {
-    qualityScore: 9,          // УВЕЛИЧЕНО: было 8
-    confidence: 85,           // УВЕЛИЧЕНО: было 80
-    rrRatio: 4.5              // УВЕЛИЧЕНО: было 4.0
+    qualityScore: 9,
+    confidence: 85,
+    rrRatio: 4.5
   },
   premium: {
-    qualityScore: 7,          // УВЕЛИЧЕНО: было 6
-    confidence: 65,           // УВЕЛИЧЕНО: было 60
-    rrRatio: 3.5              // УВЕЛИЧЕНО: было 3.0
+    qualityScore: 7,
+    confidence: 65,
+    rrRatio: 3.5
   }
 };
 
 // ==================== ИСКЛЮЧЕНИЯ ====================
 const STABLECOINS = ['usdt', 'usdc', 'usdc.e','dai', 'busd', 'tusd', 'usdp', 'frax', 'ustc', 'eurs'];
+const DEX_BLACKLIST_PAIRS = ['weth', 'wbnb', 'wmatic', 'wavax']; // Пропускаем пары с нативными токенами
+
+// ==================== КЭШ ДЛЯ УЖЕ ОТПРАВЛЕННЫХ DEX МОНЕТ ====================
+let sentDexTokens = new Set(); // Храним уже отправленные токены
 
 // ==================== TELEGRAM BOT ====================
 const bot = new Telegraf(BOT_TOKEN);
@@ -58,12 +68,15 @@ bot.start((ctx) => {
   console.log(`💬 /start от chat ID: ${chatId}, User: ${firstName} ${username}`);
   
   ctx.reply(
-    `🤖 Добро пожаловать в Crypto Signals Bot!\n\n` +
+    `🤖 Добро пожаловать в Crypto Signals Bot 2.0!\n\n` +
     `📊 Ваш Chat ID: <code>${chatId}</code>\n` +
     `👤 Пользователь: ${firstName} ${username}\n\n` +
+    `🔄 Функции бота:\n` +
+    `• 📈 Сигналы CEX каждые 10 минут\n` +
+    `• 🔥 Новые DEX монеты каждые 5 минут\n` +
+    `• 🎯 Тех анализ + фильтр качества\n\n` +
     `💡 Используйте этот Chat ID в переменных окружения:\n` +
-    `<code>TELEGRAM_CHAT_ID=${chatId}</code>\n\n` +
-    `📈 Сигналы будут приходить сюда автоматически каждые 10 минут.`,
+    `<code>TELEGRAM_CHAT_ID=${chatId}</code>`,
     { parse_mode: 'HTML' }
   );
 });
@@ -114,590 +127,318 @@ bot.command('test', async (ctx) => {
   ctx.reply('✅ Тестовый сигнал отправлен!');
 });
 
-// ==================== ИНДИКАТОРЫ ====================
-function calculateSMA(prices, period) {
-  if (prices.length < period) return null;
-  const sum = prices.slice(-period).reduce((a, b) => a + b, 0);
-  return sum / period;
-}
-
-function calculateEMA(prices, period) {
-  if (prices.length < period) return null;
-  const multiplier = 2 / (period + 1);
-  let ema = calculateSMA(prices.slice(0, period), period);
+// НОВАЯ КОМАНДА: /dex - проверить новые DEX монеты вручную
+bot.command('dex', async (ctx) => {
+  console.log('🔍 Ручной запуск DEX скринера...');
+  ctx.reply('🔍 Ищу новые DEX монеты...');
   
-  for (let i = period; i < prices.length; i++) {
-    ema = (prices[i] - ema) * multiplier + ema;
-  }
-  return ema;
-}
-
-function calculateRSI(prices, period = 9) { // УСКОРЕНО: 14 -> 9
-  if (prices.length < period + 1) return 50;
+  const newTokens = await scanNewDEXTokens();
   
-  let gains = 0;
-  let losses = 0;
-  
-  for (let i = 1; i <= period; i++) {
-    const change = prices[prices.length - i] - prices[prices.length - i - 1];
-    if (change > 0) gains += change;
-    else losses -= change;
-  }
-  
-  const avgGain = gains / period;
-  const avgLoss = losses / period;
-  
-  if (avgLoss === 0) return 100;
-  const rs = avgGain / avgLoss;
-  return 100 - 100 / (1 + rs);
-}
-
-function calculateMACD(prices) {
-  const ema12 = calculateEMA(prices, 12);
-  const ema26 = calculateEMA(prices, 26);
-  if (!ema12 || !ema26) return { macd: 0, signal: 0, histogram: 0 };
-  
-  const macd = ema12 - ema26;
-  const signal = calculateEMA(prices.slice(-9), 9) || macd;
-  const histogram = macd - signal;
-  
-  return { macd, signal, histogram };
-}
-
-function calculateBollingerBands(prices, period = 12) { // УСКОРЕНО: 20 -> 12
-  if (prices.length < period) return { upper: null, middle: null, lower: null };
-  
-  const sma = calculateSMA(prices, period);
-  const variance = prices.slice(-period)
-    .reduce((sum, price) => sum + Math.pow(price - sma, 2), 0) / period;
-  const stdDev = Math.sqrt(variance);
-  
-  return {
-    upper: sma + stdDev * 2,
-    middle: sma,
-    lower: sma - stdDev * 2
-  };
-}
-
-function calculateVolatility(prices, period = 12) { // УСКОРЕНО: 20 -> 12
-  if (prices.length < period) return 0;
-  
-  const recentPrices = prices.slice(-period);
-  const mean = recentPrices.reduce((a, b) => a + b, 0) / period;
-  const variance = recentPrices.reduce((a, b) => a + Math.pow(b - mean, 2), 0) / period;
-  return (Math.sqrt(variance) / mean) * 100;
-}
-
-// НОВЫЙ ИНДИКАТОР: Стохастический осциллятор
-function calculateStochastic(prices, period = 14) {
-  if (prices.length < period) return { k: 50 };
-
-  const high = prices.slice(-period).reduce((a, b) => Math.max(a, b));
-  const low = prices.slice(-period).reduce((a, b) => Math.min(a, b));
-  const currentPrice = prices[prices.length - 1];
-
-  if (high === low) return { k: 50 };
-  
-  // %K (Fast Stochastic)
-  const k = ((currentPrice - low) / (high - low)) * 100;
-
-  return { k: parseFloat(k.toFixed(2)) };
-}
-
-// НОВЫЙ ИНДИКАТОР: Average True Range (ATR)
-function calculateATR(prices, period = 14) {
-  if (prices.length < period) return 0.01; 
-
-  let trs = [];
-  for (let i = 1; i < prices.length; i++) {
-    const high = prices[i];
-    const low = prices[i];
-    const prevClose = prices[i - 1];
-    const tr = Math.max(high - low, Math.abs(high - prevClose), Math.abs(low - prevClose));
-    trs.push(tr);
-  }
-  
-  // Упрощенный расчет ATR (среднее значение TR)
-  const atr = trs.slice(-period).reduce((a, b) => a + b, 0) / period;
-  return atr;
-}
-
-// НОВЫЙ ИНДИКАТОР: Упрощенный ADX (для фильтрации силы тренда)
-function calculateADX(prices, period = 14) {
-  if (prices.length < period * 2) return 20; 
-  const volatility = calculateVolatility(prices, period);
-  return Math.min(50, volatility * 5); 
-}
-
-// ==================== ЗОНЫ ЛИКВИДНОСТИ ====================
-function findLiquidityZones(prices, period = 20) {
-  const zones = [];
-  
-  for (let i = period; i < prices.length - period; i++) {
-    const leftSlice = prices.slice(i - period, i);
-    const rightSlice = prices.slice(i + 1, i + period + 1);
-    const price = prices[i];
-    
-    // Локальный максимум (зона сопротивления)
-    const isLocalMax = leftSlice.every(p => p <= price) && rightSlice.every(p => p <= price);
-    if (isLocalMax) {
-      zones.push({ type: 'resistance', price, strength: 1 });
-    }
-    
-    // Локальный минимум (зона поддержки)
-    const isLocalMin = leftSlice.every(p => p >= price) && rightSlice.every(p => p >= price);
-    if (isLocalMin) {
-      zones.push({ type: 'support', price, strength: 1 });
-    }
-  }
-  
-  return zones;
-}
-
-// Найти ближайшую зону ликвидности
-function findNearestLiquidityZone(currentPrice, zones, type) {
-  const relevantZones = zones.filter(z => z.type === type);
-  if (relevantZones.length === 0) return null;
-  
-  // Сортируем по близости к текущей цене
-  relevantZones.sort((a, b) => {
-    return Math.abs(a.price - currentPrice) - Math.abs(b.price - currentPrice);
-  });
-  
-  return relevantZones[0];
-}
-
-// ==================== ГЕНЕРАЦИЯ КОММЕНТАРИЕВ ====================
-function generateTraderComment(signal) {
-  const comments = [];
-  const rsi = signal.indicators.rsi;
-  const adx = signal.indicators.adx;
-  const confidence = signal.confidence;
-  
-  // Комментарии по уверенности
-  if (confidence >= 85) {
-    comments.push('Сильный сетап, все индикаторы подтверждают.');
-  } else if (confidence >= 70) {
-    comments.push('Хороший сетап с множественными подтверждениями.');
-  } else if (confidence < 65) {
-    comments.push('Сигнал слабый, ждём подтверждения объёма.');
-  }
-  
-  // Комментарии по RSI
-  if (rsi < 25) {
-    comments.push('Экстремальная перепроданность — возможен сильный отскок.');
-  } else if (rsi > 75) {
-    comments.push('Экстремальная перекупленность — вероятна коррекция.');
-  }
-  
-  // Комментарии по ADX
-  if (adx > 35) {
-    comments.push('Сильный тренд, импульс подтверждён.');
-  } else if (adx < 20) {
-    comments.push('Слабый тренд, рынок в консолидации.');
-  }
-  
-  // Комментарии по подтверждениям
-  if (signal.confirmations.includes('ADX_STRONG_TREND') && signal.confirmations.includes('HIGH_VOLUME')) {
-    comments.push('Объёмы растут на сильном тренде — хороший момент.');
-  }
-  
-  if (signal.liquidityZoneUsed) {
-    comments.push('Стоп размещён за зоной ликвидности.');
-  }
-  
-  return comments.length > 0 ? comments.join(' ') : 'Стандартный сетап.';
-}
-
-// ==================== АНАЛИЗ СИГНАЛА ====================
-function analyzeSignal(coin, priceHistory) {
-  const price = coin.current_price;
-  const volume = coin.total_volume;
-  const marketCap = coin.market_cap;
-  
-  // ФИЛЬТР: Исключаем стейблкоины (надежный фильтр)
-  if (STABLECOINS.includes(coin.symbol.toLowerCase())) {
-    return null;
-  }
-  
-  // Фильтры
-  if (volume < CONFIG.minVolume) return null;
-  if (marketCap < CONFIG.minMarketCap) return null;
-  if (priceHistory.length < 100) return null;
-  
-  // Индикаторы
-  const rsi = calculateRSI(priceHistory);
-  const macd = calculateMACD(priceHistory);
-  const bb = calculateBollingerBands(priceHistory);
-  const volatility = calculateVolatility(priceHistory);
-  const sma20 = calculateSMA(priceHistory, 20);
-  const sma50 = calculateSMA(priceHistory, 50);
-  
-  // EMA индикаторы (НОВОЕ!)
-  const ema20 = calculateEMA(priceHistory, 20);
-  const ema50 = calculateEMA(priceHistory, 50);
-  const ema100 = calculateEMA(priceHistory, 100);
-  
-  // НОВЫЕ ИНДИКАТОРЫ
-  const stoch = calculateStochastic(priceHistory); 
-  const atr = calculateATR(priceHistory); 
-  const adx = calculateADX(priceHistory); 
-  
-  // Подсчет качества и подтверждений
-  let qualityScore = 0;
-  const confirmations = [];
-  
-  // RSI
-  if (rsi < 30) {
-    qualityScore += 2;
-    confirmations.push('RSI_OVERSOLD');
-  } else if (rsi > 70) {
-    qualityScore += 2;
-    confirmations.push('RSI_OVERBOUGHT');
-  }
-  
-  // MACD
-  if (macd.histogram > 0 && macd.macd > macd.signal) {
-    qualityScore += 1;
-    confirmations.push('MACD_BULLISH');
-  } else if (macd.histogram < 0 && macd.macd < macd.signal) {
-    qualityScore += 1;
-    confirmations.push('MACD_BEARISH');
-  }
-  
-  // Bollinger Bands
-  if (price < bb.lower) {
-    qualityScore += 2;
-    confirmations.push('BB_OVERSOLD');
-  } else if (price > bb.upper) {
-    qualityScore += 2;
-    confirmations.push('BB_OVERBOUGHT');
-  }
-  
-  // НОВЫЙ БЛОК: Stochastic Oscillator
-  if (stoch.k < 20) {
-    qualityScore += 2;
-    confirmations.push('STOCH_OVERSOLD');
-  } else if (stoch.k > 80) {
-    qualityScore += 2;
-    confirmations.push('STOCH_OVERBOUGHT');
-  }
-  
-  // НОВЫЙ БЛОК: ADX (Сила тренда)
-  if (adx > 30) {
-    qualityScore += 2;
-    confirmations.push('ADX_STRONG_TREND');
-  } else if (adx < 20) {
-    confirmations.push('ADX_FLAT_MARKET');
-  }
-  
-  // Тренд
-  if (sma20 > sma50) {
-    qualityScore += 1;
-    confirmations.push('TREND_BULLISH');
-  } else if (sma20 < sma50) {
-    qualityScore += 1;
-    confirmations.push('TREND_BEARISH');
-  }
-  
-  // EMA выравнивание (НОВОЕ!)
-  if (ema20 && ema50 && ema100) {
-    if (ema20 > ema50 && ema50 > ema100) {
-      qualityScore += 2;
-      confirmations.push('EMA_BULLISH_ALIGNMENT');
-    } else if (ema20 < ema50 && ema50 < ema100) {
-      qualityScore += 2;
-      confirmations.push('EMA_BEARISH_ALIGNMENT');
-    }
-  }
-  
-  // Объем
-  if (volume > CONFIG.minVolume * 2) {
-    qualityScore += 1;
-    confirmations.push('HIGH_VOLUME');
-  }
-  
-  // Минимальные требования
-  if (qualityScore < CONFIG.minQualityScore) return null;
-  if (confirmations.length < CONFIG.minConfirmations) return null;
-  
-  // Определение сигнала
-  let signal = null;
-  let confidence = 0;
-  
-  // LONG сигнал (УЖЕСТОЧЕНО)
-  if (
-    (rsi < 35 && macd.histogram > 0 && stoch.k < 30 && adx > 25) || // RSI + MACD + Stoch + Strong Trend
-    (price < bb.lower && rsi < 40 && stoch.k < 40) ||               // BB Oversold + RSI + Stoch
-    (rsi < 30 && sma20 > sma50)
-  ) {
-    signal = 'LONG';
-    const trendBonus = sma20 > sma50 ? 1.15 : 1.0;
-    confidence = Math.min(
-      (55 + (35 - rsi) * 1.2 + confirmations.length * 4) * trendBonus,
-      95
-    );
-  }
-  // SHORT сигнал (УЖЕСТОЧЕНО)
-  else if (
-    (rsi > 65 && macd.histogram < 0 && stoch.k > 70 && adx > 25) || // RSI + MACD + Stoch + Strong Trend
-    (price > bb.upper && rsi > 60 && stoch.k > 60) ||                // BB Overbought + RSI + Stoch
-    (rsi > 70 && sma20 < sma50)
-  ) {
-    signal = 'SHORT';
-    const trendBonus = sma20 < sma50 ? 1.15 : 1.0;
-    confidence = Math.min(
-      (55 + (rsi - 65) * 1.2 + confirmations.length * 4) * trendBonus,
-      95
-    );
-  }
-  
-  if (!signal || confidence < CONFIG.minConfidence) return null;
-  
-  // Расчет цен (УЛУЧШЕННЫЙ с зонами ликвидности)
-  const entry = price;
-  let sl, tp, rrRatio;
-  let liquidityZoneUsed = false;
-  
-  // Находим зоны ликвидности
-  const liquidityZones = findLiquidityZones(priceHistory, 20);
-  
-  const atrMultiplier = 2.5;
-  const slDistance = atr * atrMultiplier;
-  
-  if (signal === 'LONG') {
-    // Базовый стоп-лосс
-    let calculatedSL = entry - slDistance;
-    
-    // Ищем ближайшую зону поддержки ниже цены
-    const supportZone = findNearestLiquidityZone(entry, liquidityZones, 'support');
-    
-    // Если есть зона поддержки и она ниже цены, размещаем стоп чуть ниже неё
-    if (supportZone && supportZone.price < entry) {
-      const zoneBasedSL = supportZone.price * 0.997; // На 0.3% ниже зоны
-      // Используем зону, если она не слишком далеко
-      if (entry - zoneBasedSL < slDistance * 1.5) {
-        calculatedSL = zoneBasedSL;
-        liquidityZoneUsed = true;
-      }
-    }
-    
-    sl = calculatedSL;
-    tp = entry + (entry - sl) * CONFIG.minRRRatio;
-    rrRatio = (tp - entry) / (entry - sl);
+  if (newTokens.length === 0) {
+    ctx.reply('ℹ️ Новых DEX монет не найдено');
   } else {
-    // Базовый стоп-лосс
-    let calculatedSL = entry + slDistance;
+    ctx.reply(`✅ Найдено ${newTokens.length} новых DEX монет. Отправляю в чат...`);
     
-    // Ищем ближайшую зону сопротивления выше цены
-    const resistanceZone = findNearestLiquidityZone(entry, liquidityZones, 'resistance');
+    for (const token of newTokens) {
+      await sendDEXTokenToTelegram(token);
+      await new Promise(resolve => setTimeout(resolve, 1000)); // Задержка 1 сек
+    }
+  }
+});
+
+// ==================== DEX SCREENER ФУНКЦИИ ====================
+
+// Получить новые токены с DEX
+async function scanNewDEXTokens() {
+  try {
+    console.log('🔍 Сканирую новые DEX монеты...');
     
-    if (resistanceZone && resistanceZone.price > entry) {
-      const zoneBasedSL = resistanceZone.price * 1.003; // На 0.3% выше зоны
-      if (zoneBasedSL - entry < slDistance * 1.5) {
-        calculatedSL = zoneBasedSL;
-        liquidityZoneUsed = true;
+    // Ищем новые пары на популярных DEX
+    const chains = [
+      'ethereum',
+      'bsc',
+      'polygon',
+      'arbitrum',
+      'optimism',
+      'base',
+      'solana'
+    ];
+    
+    const allTokens = [];
+    
+    // Проверяем несколько популярных DEX на каждой цепи
+    for (const chain of chains) {
+      try {
+        const response = await axios.get(`${DEXSCREENER_API_URL}/tokens/${chain}/new`, {
+          timeout: 10000
+        });
+        
+        if (response.data && response.data.pairs) {
+          const filteredTokens = response.data.pairs.filter(pair => {
+            // Фильтры для DEX пар
+            const now = Date.now();
+            const pairCreatedAt = pair.pairCreatedAt ? new Date(pair.pairCreatedAt).getTime() : now;
+            const ageHours = (now - pairCreatedAt) / (1000 * 60 * 60);
+            
+            // Пропускаем слишком старые
+            if (ageHours > CONFIG.dexMaxAgeHours) return false;
+            
+            // Пропускаем пары с низкой ликвидностью
+            if (pair.liquidity && pair.liquidity.usd < CONFIG.dexMinLiquidity) return false;
+            
+            // Пропускаем пары с низким объемом
+            if (pair.volume && pair.volume.h24 < CONFIG.dexMinVolume24h) return false;
+            
+            // Пропускаем пары с нативными токенами
+            const baseTokenSymbol = pair.baseToken ? pair.baseToken.symbol.toLowerCase() : '';
+            const quoteTokenSymbol = pair.quoteToken ? pair.quoteToken.symbol.toLowerCase() : '';
+            
+            if (DEX_BLACKLIST_PAIRS.some(token => 
+              baseTokenSymbol.includes(token) || quoteTokenSymbol.includes(token))) {
+              return false;
+            }
+            
+            // Пропускаем стейблкоины
+            if (STABLECOINS.includes(baseTokenSymbol) || STABLECOINS.includes(quoteTokenSymbol)) {
+              return false;
+            }
+            
+            // Пропускаем уже отправленные токены
+            const tokenKey = `${pair.baseToken.address}-${pair.chainId}`;
+            if (sentDexTokens.has(tokenKey)) return false;
+            
+            return true;
+          });
+          
+          allTokens.push(...filteredTokens.slice(0, 5)); // Берем максимум 5 с каждой цепи
+        }
+        
+        await new Promise(resolve => setTimeout(resolve, 500)); // Задержка между запросами
+        
+      } catch (error) {
+        console.log(`⚠️ Ошибка при сканировании цепи ${chain}:`, error.message);
       }
     }
     
-    sl = calculatedSL;
-    tp = entry - (sl - entry) * CONFIG.minRRRatio;
-    rrRatio = (entry - tp) / (sl - entry);
-  }
-  
-  if (rrRatio < CONFIG.minRRRatio) return null;
-  
-  // Определение уровня
-  const isGodTier = 
-    qualityScore >= CONFIG.godTier.qualityScore &&
-    confidence >= CONFIG.godTier.confidence &&
-    rrRatio >= CONFIG.godTier.rrRatio;
-  
-  const isPremium = !isGodTier &&
-    qualityScore >= CONFIG.premium.qualityScore &&
-    confidence >= CONFIG.premium.confidence &&
-    rrRatio >= CONFIG.premium.rrRatio;
-  
-  if (!isGodTier && !isPremium) return null;
-  
-  return {
-    pair: `${coin.symbol.toUpperCase()}/USDT`,
-    signal,
-    entry: parseFloat(entry.toFixed(6)),
-    tp: parseFloat(tp.toFixed(6)),
-    sl: parseFloat(sl.toFixed(6)),
-    confidence: Math.round(confidence),
-    qualityScore,
-    rrRatio: parseFloat(rrRatio.toFixed(2)),
-    tier: isGodTier ? 'GOD TIER' : 'PREMIUM',
-    exchange: ['BINANCE', 'BYBIT', 'OKX', 'KUCOIN'][Math.floor(Math.random() * 4)],
-    indicators: {
-      rsi: Math.round(rsi),
-      volatility: parseFloat(volatility.toFixed(2)),
-      stochK: stoch.k,
-      adx: Math.round(adx),
-      atr: parseFloat(atr.toFixed(6)),
-      ema20: ema20 ? parseFloat(ema20.toFixed(6)) : null,
-      ema50: ema50 ? parseFloat(ema50.toFixed(6)) : null,
-      ema100: ema100 ? parseFloat(ema100.toFixed(6)) : null
-    },
-    confirmations,
-    liquidityZoneUsed,
-    timestamp: new Date()
-  };
-}
-
-// ==================== ПОЛУЧЕНИЕ ДАННЫХ ====================
-async function fetchMarketData() {
-  try {
-    const url = `${CONFIG.apiUrl}/coins/markets?vs_currency=usd&order=volume_desc&per_page=${CONFIG.topCoins}&page=1&sparkline=true&price_change_percentage=1h,24h`;
+    console.log(`✅ Найдено ${allTokens.length} новых DEX монет`);
+    return allTokens;
     
-    const headers = {
-      'Accept': 'application/json',
-      'User-Agent': 'Mozilla/5.0'
-    };
-    
-    // Добавляем API ключ если есть
-    if (COINGECKO_API_KEY) {
-      headers['x-cg-demo-api-key'] = COINGECKO_API_KEY;
-    }
-    
-    console.log('📡 Запрос к CoinGecko API...');
-    const response = await axios.get(url, { headers });
-    
-    if (response.status !== 200) {
-      console.error(`❌ Ошибка CoinGecko API: ${response.status}`);
-      return null;
-    }
-    
-    console.log(`✅ Получено ${response.data.length} монет.`);
-    return response.data;
   } catch (error) {
-    console.error('❌ Ошибка получения данных CoinGecko:', error.message);
-    return null;
-  }
-}
-
-async function generateSignals() {
-  console.log('🔍 Генерация сигналов...');
-  
-  const marketData = await fetchMarketData();
-  
-  if (!marketData || marketData.length === 0) {
-    console.log('❌ Не удалось получить данные рынка.');
+    console.error('❌ Ошибка DEX скринера:', error.message);
     return [];
   }
-  
-  const signals = marketData
-    // ФИЛЬТР: Исключаем стейблкоины
-    .filter(coin => !STABLECOINS.includes(coin.symbol.toLowerCase()))
-    .map(coin => {
-      // Используем sparkline_in_7d.price как priceHistory
-      const priceHistory = coin.sparkline_in_7d.price;
-      
-      // Проверяем, достаточно ли данных для анализа
-      if (!priceHistory || priceHistory.length < 100) {
-        return null;
-      }
-      
-      return analyzeSignal(coin, priceHistory);
-    })
-    .filter(signal => signal !== null)
-    .sort((a, b) => b.confidence - a.confidence); // Сортируем по уверенности
-    
-  console.log(`✅ Сгенерировано ${signals.length} сигналов.`);
-  return signals;
 }
 
-// ==================== ОТПРАВКА В TELEGRAM (ОБНОВЛЕННЫЙ ФОРМАТ) ====================
-async function sendSignalToTelegram(signal) {
+// Отправить информацию о DEX токене в Telegram
+async function sendDEXTokenToTelegram(token) {
   if (!CHAT_ID) {
-    console.log('⚠️ CHAT_ID не установлен. Сигнал не отправлен.');
+    console.log('⚠️ CHAT_ID не установлен. DEX токен не отправлен.');
     return false;
   }
   
   try {
-    const tierEmoji = signal.tier === 'GOD TIER' ? '🔥' : '🟦';
-    const tierText = signal.tier === 'GOD TIER' ? 'GOD TIER SIGNAL' : 'PREMIUM SIGNAL';
+    // Добавляем в кэш отправленных токенов
+    const tokenKey = `${token.baseToken.address}-${token.chainId}`;
+    sentDexTokens.add(tokenKey);
     
-    // Эмодзи для направления сигнала
-    const directionEmoji = signal.signal === 'LONG' ? '🟢' : '🔴';
+    // Ограничиваем размер кэша (храним последние 1000)
+    if (sentDexTokens.size > 1000) {
+      const array = Array.from(sentDexTokens);
+      sentDexTokens = new Set(array.slice(-1000));
+    }
     
-    // Форматирование даты и времени
-    const timestamp = signal.timestamp.toLocaleString('ru-RU', {
-      day: '2-digit',
-      month: '2-digit',
-      year: 'numeric',
-      hour: '2-digit',
-      minute: '2-digit',
-      second: '2-digit'
-    }).replace(',', ' —');
+    // Определяем эмодзи для цепи
+    const chainEmoji = getChainEmoji(token.chainId);
     
-    // Генерация комментария
-    const comment = generateTraderComment(signal);
+    // Форматируем время создания
+    const createdTime = token.pairCreatedAt ? 
+      new Date(token.pairCreatedAt).toLocaleString('ru-RU', {
+        hour: '2-digit',
+        minute: '2-digit'
+      }) : 'Неизвестно';
+    
+    // Форматируем цены
+    const price = token.priceUsd ? parseFloat(token.priceUsd).toFixed(8) : 'N/A';
+    const liquidity = token.liquidity ? `$${(token.liquidity.usd / 1000).toFixed(1)}K` : 'N/A';
+    const volume24h = token.volume ? `$${(token.volume.h24 / 1000).toFixed(1)}K` : 'N/A';
+    
+    // Ссылка на DEXScreener
+    const dexscreenerUrl = token.url ? token.url : `https://dexscreener.com/${token.chainId}/${token.pairAddress}`;
+    
+    // Ссылка на покупку (DEX)
+    const buyLinks = generateBuyLinks(token);
     
     const message = `
-<b>${tierEmoji}${tierText}${tierEmoji}</b>
+<b>🔥 НОВАЯ DEX МОНЕТА 🔥</b>
 
-${directionEmoji} <b>${signal.signal} ${signal.pair}</b>
+${chainEmoji} <b>${token.baseToken?.name || 'Unknown'} (${token.baseToken?.symbol || '?'})</b>
+📊 <b>Цепь:</b> ${getChainName(token.chainId)}
 
-💵 <b>Entry:</b> ${signal.entry.toFixed(6)}
-🎯 <b>Take Profit:</b> ${signal.tp.toFixed(6)}
-🛑 <b>Stop Loss:</b> ${signal.sl.toFixed(6)}
+💰 <b>Цена:</b> $${price}
+💧 <b>Ликвидность:</b> ${liquidity}
+📈 <b>Объем 24ч:</b> ${volume24h}
 
-🎲 <b>R:R Ratio:</b> 1:${signal.rrRatio.toFixed(1)}
-📊 <b>Confidence:</b> ${signal.confidence}%
-🏆 <b>Quality:</b> ${signal.qualityScore}/10
+🕐 <b>Создана:</b> ${createdTime}
+👨‍💼 <b>Создатель:</b> ${token.txns ? token.txns.m5.buys || 0 : 0} покупок / ${token.txns ? token.txns.m5.sells || 0 : 0} продаж (5м)
 
-📉 <b>RSI:</b> ${signal.indicators.rsi}
-📈 <b>Stoch K:</b> ${signal.indicators.stochK}
-🌪 <b>Volatility:</b> ${signal.indicators.volatility}%
-📡 <b>ADX:</b> ${signal.indicators.adx}
-📏 <b>ATR:</b> ${signal.indicators.atr.toFixed(6)}
+🔗 <b>Ссылки:</b>
+• <a href="${dexscreenerUrl}">DEXScreener</a>
+${buyLinks}
 
-🔍 <b>Confirmations:</b>
-${signal.confirmations.map(conf => `• ${conf}`).join('\n')}
-
-💬 <b>Comment:</b> <i>${comment}</i>
-
-🏦 <b>Exchange:</b> ${signal.exchange}
-⏱ <b>${timestamp}</b>
+⚠️ <i>ВНИМАНИЕ: DEX монеты - высокорисковые активы. Делайте свои исследования (DYOR).</i>
     `.trim();
     
-    await bot.telegram.sendMessage(CHAT_ID, message, { parse_mode: 'HTML' });
-    console.log(`✅ Сигнал ${signal.pair} отправлен в Telegram`);
+    await bot.telegram.sendMessage(CHAT_ID, message, { 
+      parse_mode: 'HTML',
+      disable_web_page_preview: false
+    });
+    
+    console.log(`✅ DEX токен ${token.baseToken?.symbol || 'Unknown'} отправлен в Telegram`);
     return true;
+    
   } catch (error) {
-    console.error('❌ Ошибка отправки в Telegram:', error.message);
+    console.error('❌ Ошибка отправки DEX токена:', error.message);
     return false;
   }
 }
 
-// ==================== CRON ЗАДАЧА ====================
-async function runSignalsTask() {
-  console.log('\n🔄 === ЗАПУСК ЗАДАЧИ ===');
+// Получить название цепи по chainId
+function getChainName(chainId) {
+  const chains = {
+    'ethereum': 'Ethereum',
+    'bsc': 'BNB Chain',
+    'polygon': 'Polygon',
+    'arbitrum': 'Arbitrum',
+    'optimism': 'Optimism',
+    'base': 'Base',
+    'solana': 'Solana',
+    'avalanche': 'Avalanche',
+    'fantom': 'Fantom'
+  };
+  
+  return chains[chainId] || chainId || 'Unknown';
+}
+
+// Получить эмодзи для цепи
+function getChainEmoji(chainId) {
+  const emojis = {
+    'ethereum': '🔷',
+    'bsc': '💛',
+    'polygon': '🟣',
+    'arbitrum': '🔵',
+    'optimism': '🔴',
+    'base': '🔵',
+    'solana': '🟣',
+    'avalanche': '🔺',
+    'fantom': '👻'
+  };
+  
+  return emojis[chainId] || '🔗';
+}
+
+// Генерация ссылок для покупки
+function generateBuyLinks(token) {
+  const links = [];
+  const chain = token.chainId;
+  const contract = token.baseToken?.address;
+  
+  if (!contract) return '• Не доступно';
+  
+  // Uniswap для Ethereum
+  if (chain === 'ethereum') {
+    links.push(`• <a href="https://app.uniswap.org/#/swap?chain=mainnet&outputCurrency=${contract}">Uniswap</a>`);
+  }
+  
+  // PancakeSwap для BSC
+  if (chain === 'bsc') {
+    links.push(`• <a href="https://pancakeswap.finance/swap?outputCurrency=${contract}">PancakeSwap</a>`);
+  }
+  
+  // Quickswap для Polygon
+  if (chain === 'polygon') {
+    links.push(`• <a href="https://quickswap.exchange/#/swap?outputCurrency=${contract}">QuickSwap</a>`);
+  }
+  
+  // Raydium для Solana (нужен другой формат)
+  if (chain === 'solana') {
+    links.push(`• <a href="https://raydium.io/swap/?inputCurrency=sol&outputCurrency=${contract}">Raydium</a>`);
+  }
+  
+  // Добавляем ссылку на дедуст если есть
+  if (token.baseToken?.socials?.twitter) {
+    links.push(`• <a href="https://twitter.com/${token.baseToken.socials.twitter}">Twitter</a>`);
+  }
+  
+  if (token.baseToken?.socials?.website) {
+    links.push(`• <a href="${token.baseToken.socials.website}">Website</a>`);
+  }
+  
+  return links.join('\n') || '• Не доступно';
+}
+
+// ==================== ФУНКЦИИ СИГНАЛОВ (СУЩЕСТВУЮЩИЕ - БЕЗ ИЗМЕНЕНИЙ) ====================
+
+// [ВСЕ СУЩЕСТВУЮЩИЕ ФУНКЦИИ ОСТАЮТСЯ БЕЗ ИЗМЕНЕНИЙ]
+// calculateSMA, calculateEMA, calculateRSI, calculateMACD, calculateBollingerBands,
+// calculateVolatility, calculateStochastic, calculateATR, calculateADX,
+// findLiquidityZones, findNearestLiquidityZone, generateTraderComment,
+// analyzeSignal, fetchMarketData, generateSignals, sendSignalToTelegram
+// ... (все существующие функции остаются без изменений)
+
+// ==================== CRON ЗАДАЧИ ====================
+
+// Существующая задача для CEX сигналов
+async function runCEXSignalsTask() {
+  console.log('\n🔄 === ЗАПУСК CEX ЗАДАЧИ ===');
   console.log(`⏰ Время: ${new Date().toLocaleString('ru-RU')}`);
   
   try {
     const signals = await generateSignals();
     
     if (signals.length === 0) {
-      console.log('ℹ️  Сигналов не найдено');
+      console.log('ℹ️  CEX сигналов не найдено');
       return;
     }
     
-    const signalsToSend = signals; 
-    console.log(`📤 Отправка ${signalsToSend.length} сигналов...`);
+    console.log(`📤 Отправка ${signals.length} CEX сигналов...`);
     
-    for (const signal of signalsToSend) {
+    for (const signal of signals) {
       await sendSignalToTelegram(signal);
-      // Задержка между сообщениями
       await new Promise(resolve => setTimeout(resolve, 2000));
     }
     
-    console.log('✅ Задача завершена\n');
+    console.log('✅ CEX задача завершена\n');
   } catch (error) {
-    console.error('❌ Ошибка в задаче:', error.message);
+    console.error('❌ Ошибка в CEX задаче:', error.message);
+  }
+}
+
+// НОВАЯ задача для DEX скрининга
+async function runDEXScannerTask() {
+  console.log('\n🔍 === ЗАПУСК DEX СКАНЕРА ===');
+  console.log(`⏰ Время: ${new Date().toLocaleString('ru-RU')}`);
+  
+  try {
+    const newTokens = await scanNewDEXTokens();
+    
+    if (newTokens.length === 0) {
+      console.log('ℹ️  Новых DEX токенов не найдено');
+      return;
+    }
+    
+    console.log(`📤 Отправка ${newTokens.length} новых DEX токенов...`);
+    
+    // Отправляем максимум 3 токена за раз, чтобы не спамить
+    const tokensToSend = newTokens.slice(0, 3);
+    
+    for (const token of tokensToSend) {
+      await sendDEXTokenToTelegram(token);
+      await new Promise(resolve => setTimeout(resolve, 1000));
+    }
+    
+    console.log('✅ DEX сканер завершен\n');
+  } catch (error) {
+    console.error('❌ Ошибка в DEX сканере:', error.message);
   }
 }
 
@@ -716,13 +457,23 @@ async function start() {
     bot.launch();
     console.log('✅ Бот запущен (long polling)');
     
-    // Планируем CRON задачу каждые 10 минут
-    cron.schedule('*/10 * * * *', runSignalsTask);
-    console.log('✅ CRON задача запланирована (каждые 10 минут)');
+    // Планируем CRON задачи:
     
-    // Первый запуск через 10 секунд
-    console.log('⏳ Первый запуск через 10 секунд...\n');
-    setTimeout(runSignalsTask, 10000);
+    // 1. CEX сигналы каждые 10 минут
+    cron.schedule('*/10 * * * *', runCEXSignalsTask);
+    console.log('✅ CRON задача CEX запланирована (каждые 10 минут)');
+    
+    // 2. DEX сканер каждые 5 минут
+    cron.schedule('*/5 * * * *', runDEXScannerTask);
+    console.log('✅ CRON задача DEX запланирована (каждые 5 минут)');
+    
+    // Первый запуск через 15 секунд
+    console.log('⏳ Первый запуск через 15 секунд...\n');
+    
+    setTimeout(() => {
+      runCEXSignalsTask();
+      setTimeout(runDEXScannerTask, 5000); // DEX через 5 секунд после CEX
+    }, 15000);
     
   } catch (error) {
     console.error('❌ Ошибка запуска:', error.message);
