@@ -29,9 +29,9 @@ const CONFIG = {
   minVolume: 50000000,        // УВЕЛИЧЕНО: $50M минимальный объем
   minMarketCap: 500000000,    // УВЕЛИЧЕНО: $500M минимальная капитализация
   minConfidence: 65,          // УВЕЛИЧЕНО: 65% минимальная уверенность
-  minQualityScore: 7,         // УВЕЛИЧЕНО: 7/10 минимальное качество
+  minQualityScore: 6,         // СНИЖЕНО: 6/10 минимальное качество (для увеличения количества сигналов)
   minRRRatio: 4.0,            // УВЕЛИЧЕНО: 1:4.0 минимальное соотношение риск/прибыль (Требование пользователя)
-  minConfirmations: 3,        // НОВОЕ: минимум 3 подтверждения
+  minConfirmations: 2,        // СНИЖЕНО: минимум 2 подтверждения (для увеличения количества сигналов)
   
   // Критерии уровней
   godTier: {
@@ -42,7 +42,7 @@ const CONFIG = {
   premium: {
     qualityScore: 7,          // УВЕЛИЧЕНО: было 6
     confidence: 65,           // УВЕЛИЧЕНО: было 60
-    rrRatio: 4.0              // УВЕЛИЧЕНО: 1:4.0 для Premium (для соответствия новому minRRRatio)
+    rrRatio: 3.0              // СНИЖЕНО: 1:3.0 для Premium (для увеличения количества сигналов)
   }
 };
 
@@ -571,7 +571,8 @@ function analyzeSignal(coin, priceHistory) {
     rrRatio = (entry - tp) / (sl - entry);
   }
   
-  if (rrRatio < CONFIG.minRRRatio) return null;
+  // Убираем этот фильтр, так как он проверяется ниже в isPremium/isGodTier
+  // if (rrRatio < CONFIG.minRRRatio) return null;
   
   // Определение уровня
   const isGodTier = 
