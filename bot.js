@@ -18,9 +18,10 @@ console.log('🔑 CoinGecko API Key:', COINGECKO_API_KEY ? 'УСТАНОВЛЕН
 
 // ==================== НАСТРОЙКИ ТОРГОВЛИ (ОПТИМИЗИРОВАНО ДЛЯ СКАЛЬПИНГА) ====================
 const CONFIG = {
-  // CoinGecko API
-  apiUrl: 'https://api.coingecko.com/api/v3',
-  topCoins: 250,                // УВЕЛИЧЕНО: Сканируем топ-250 монет
+  // Binance API
+  binanceApiUrl: 'https://api.binance.com/api/v3',
+  coinGeckoApiUrl: 'https://api.coingecko.com/api/v3',
+  topCoins: 150,                // УМЕНЬШЕНО: Обрабатываем топ-150 монет для скорости
   
   // Фильтры
   minVolume: 30000000,        // $30M минимальный объем
@@ -46,7 +47,7 @@ const CONFIG = {
 const STABLECOINS = ['usdt', 'usdc', 'usdc.e','dai', 'busd', 'tusd', 'usdp', 'frax', 'ustc', 'eurs'];
 
 // ==================== TELEGRAM BOT ====================
-const bot = new Telegraf(BOT_TOKEN );
+const bot = new Telegraf(BOT_TOKEN);
 
 // Команда /start
 bot.start((ctx) => {
@@ -113,6 +114,194 @@ bot.command('test', async (ctx) => {
   ctx.reply('✅ Тестовый сигнал отправлен!');
 });
 
+// ==================== BINANCE API ФУНКЦИИ ====================
+
+// Получение OHLC данных с Binance
+async function fetchBinanceOHLC(symbol, interval = '1h', limit = 100) {
+  try {
+    const response = await axios.get(
+      `${CONFIG.binanceApiUrl}/klines`,
+      {
+        params: {
+          symbol: symbol.toUpperCase(),
+          interval,
+          limit
+        },
+        timeout: 10000
+      }
+    );
+    
+    if (!response.data || response.data.length === 0) {
+      return null;
+    }
+    
+    // Преобразуем в массив цен [close] для совместимости с текущей логикой
+    const prices = response.data.map(candle => parseFloat(candle[4]));
+    
+    return {
+      prices,
+      ohlc: response.data.map(candle => ({
+        time: candle[0],
+        open: parseFloat(candle[1]),
+        high: parseFloat(candle[2]),
+        low: parseFloat(candle[3]),
+        close: parseFloat(candle[4]),
+        volume: parseFloat(candle[5])
+      }))
+    };
+  } catch (error) {
+    if (error.response?.status === 400) {
+      return null;
+    }
+    return null;
+  }
+}
+
+// Получение 24ч статистики с Binance
+async function fetchBinanceTicker(symbol) {
+  try {
+    const response = await axios.get(
+      `${CONFIG.binanceApiUrl}/ticker/24hr`,
+      {
+        params: { symbol: symbol.toUpperCase() },
+        timeout: 5000
+      }
+    );
+    
+    return {
+      symbol: response.data.symbol,
+      price: parseFloat(response.data.lastPrice),
+      volume: parseFloat(response.data.volume),
+      quoteVolume: parseFloat(response.data.quoteVolume),
+      priceChangePercent: parseFloat(response.data.priceChangePercent)
+    };
+  } catch (error) {
+    return null;
+  }
+}
+
+// Получение списка торговых пар с Binance
+async function fetchBinanceMarketData() {
+  try {
+    console.log('📡 Запрос списка монет с Binance...');
+    
+    const response = await axios.get(
+      `${CONFIG.binanceApiUrl}/exchangeInfo`,
+      { timeout: 15000 }
+    );
+    
+    if (!response.data || !response.data.symbols) {
+      console.error('❌ Нет данных от Binance');
+      return [];
+    }
+    
+    // Фильтруем только USDT пары с активной торговлей
+    const usdtPairs = response.data.symbols
+      .filter(symbol => 
+        symbol.quoteAsset === 'USDT' && 
+        symbol.status === 'TRADING' &&
+        !STABLECOINS.includes(symbol.baseAsset.toLowerCase())
+      )
+      .slice(0, CONFIG.topCoins * 2);
+    
+    console.log(`✅ Найдено ${usdtPairs.length} USDT пар`);
+    
+    // Получаем данные для топ-пар по объему
+    const marketData = [];
+    const batchSize = 10;
+    
+    for (let i = 0; i < Math.min(usdtPairs.length, 50); i += batchSize) {
+      const batch = usdtPairs.slice(i, i + batchSize);
+      const batchPromises = batch.map(async (pair) => {
+        const ticker = await fetchBinanceTicker(pair.symbol);
+        if (!ticker || ticker.volume < CONFIG.minVolume) return null;
+        
+        const ohlcData = await fetchBinanceOHLC(pair.symbol, '1h', 100);
+        if (!ohlcData || ohlcData.prices.length < 50) return null;
+        
+        return {
+          id: pair.baseAsset.toLowerCase(),
+          symbol: pair.baseAsset.toLowerCase(),
+          current_price: ticker.price,
+          total_volume: ticker.volume,
+          market_cap: ticker.quoteVolume,
+          price_change_percentage_24h: ticker.priceChangePercent,
+          sparkline_in_7d: {
+            price: ohlcData.prices
+          },
+          _binanceData: {
+            symbol: pair.symbol,
+            ohlc: ohlcData.ohlc,
+            price: ticker.price,
+            volume: ticker.volume
+          }
+        };
+      });
+      
+      const batchResults = await Promise.all(batchPromises);
+      const validResults = batchResults.filter(item => item !== null);
+      marketData.push(...validResults);
+      
+      // Пауза между батчами
+      if (i + batchSize < usdtPairs.length) {
+        await new Promise(resolve => setTimeout(resolve, 500));
+      }
+    }
+    
+    // Сортируем по объему
+    marketData.sort((a, b) => b.total_volume - a.total_volume);
+    
+    console.log(`✅ Обработано ${marketData.length} пар с реальными данными`);
+    return marketData.slice(0, CONFIG.topCoins);
+  } catch (error) {
+    console.error('❌ Ошибка получения данных Binance:', error.message);
+    return [];
+  }
+}
+
+// Fallback на CoinGecko если Binance не работает
+async function fetchCoinGeckoFallback() {
+  try {
+    const url = `${CONFIG.coinGeckoApiUrl}/coins/markets?vs_currency=usd&order=volume_desc&per_page=${CONFIG.topCoins}&page=1&sparkline=true&price_change_percentage=1h,24h`;
+    
+    const headers = {
+      'Accept': 'application/json',
+      'User-Agent': 'Mozilla/5.0'
+    };
+    
+    if (COINGECKO_API_KEY) {
+      headers['x-cg-demo-api-key'] = COINGECKO_API_KEY;
+    }
+    
+    const response = await axios.get(url, { headers, timeout: 15000 });
+    console.log(`✅ Fallback: получено ${response.data.length} монет с CoinGecko`);
+    return response.data;
+  } catch (error) {
+    console.error('❌ Ошибка CoinGecko fallback:', error.message);
+    return [];
+  }
+}
+
+// ==================== ПОЛУЧЕНИЕ ДАННЫХ ====================
+async function fetchMarketData() {
+  try {
+    console.log('📡 Получение реальных данных с Binance...');
+    
+    const marketData = await fetchBinanceMarketData();
+    
+    if (marketData.length === 0) {
+      console.log('⚠️ Не удалось получить данные с Binance, пробую CoinGecko...');
+      return await fetchCoinGeckoFallback();
+    }
+    
+    console.log(`✅ Получено ${marketData.length} монет с реальными OHLC данными.`);
+    return marketData;
+  } catch (error) {
+    console.error('❌ Ошибка fetchMarketData:', error.message);
+    return await fetchCoinGeckoFallback();
+  }
+}
+
 // ==================== ИНДИКАТОРЫ ====================
 function calculateSMA(prices, period) {
   if (prices.length < period) return null;
@@ -131,7 +320,7 @@ function calculateEMA(prices, period) {
   return ema;
 }
 
-function calculateRSI(prices, period = 9) { // УСКОРЕНО: 14 -> 9
+function calculateRSI(prices, period = 9) {
   if (prices.length < period + 1) return 50;
   
   let gains = 0;
@@ -163,7 +352,7 @@ function calculateMACD(prices) {
   return { macd, signal, histogram };
 }
 
-function calculateBollingerBands(prices, period = 12) { // УСКОРЕНО: 20 -> 12
+function calculateBollingerBands(prices, period = 12) {
   if (prices.length < period) return { upper: null, middle: null, lower: null };
   
   const sma = calculateSMA(prices, period);
@@ -178,7 +367,7 @@ function calculateBollingerBands(prices, period = 12) { // УСКОРЕНО: 20 
   };
 }
 
-function calculateVolatility(prices, period = 12) { // УСКОРЕНО: 20 -> 12
+function calculateVolatility(prices, period = 12) {
   if (prices.length < period) return 0;
   
   const recentPrices = prices.slice(-period);
@@ -187,7 +376,6 @@ function calculateVolatility(prices, period = 12) { // УСКОРЕНО: 20 -> 1
   return (Math.sqrt(variance) / mean) * 100;
 }
 
-// НОВЫЙ ИНДИКАТОР: Стохастический осциллятор
 function calculateStochastic(prices, period = 14) {
   if (prices.length < period) return { k: 50 };
 
@@ -197,15 +385,12 @@ function calculateStochastic(prices, period = 14) {
 
   if (high === low) return { k: 50 };
   
-  // %K (Fast Stochastic)
   const k = ((currentPrice - low) / (high - low)) * 100;
-
   return { k: parseFloat(k.toFixed(2)) };
 }
 
-// НОВЫЙ ИНДИКАТОР: Average True Range (ATR)
 function calculateATR(prices, period = 14) {
-  if (prices.length < period) return 0.01; 
+  if (prices.length < period) return 0.01;
 
   let trs = [];
   for (let i = 1; i < prices.length; i++) {
@@ -216,16 +401,14 @@ function calculateATR(prices, period = 14) {
     trs.push(tr);
   }
   
-  // Упрощенный расчет ATR (среднее значение TR)
   const atr = trs.slice(-period).reduce((a, b) => a + b, 0) / period;
   return atr;
 }
 
-// НОВЫЙ ИНДИКАТОР: Упрощенный ADX (для фильтрации силы тренда)
 function calculateADX(prices, period = 14) {
-  if (prices.length < period * 2) return 20; 
+  if (prices.length < period * 2) return 20;
   const volatility = calculateVolatility(prices, period);
-  return Math.min(50, volatility * 5); 
+  return Math.min(50, volatility * 5);
 }
 
 // ==================== ЗОНЫ ЛИКВИДНОСТИ ====================
@@ -237,13 +420,11 @@ function findLiquidityZones(prices, period = 20) {
     const rightSlice = prices.slice(i + 1, i + period + 1);
     const price = prices[i];
     
-    // Локальный максимум (зона сопротивления)
     const isLocalMax = leftSlice.every(p => p <= price) && rightSlice.every(p => p <= price);
     if (isLocalMax) {
       zones.push({ type: 'resistance', price, strength: 1 });
     }
     
-    // Локальный минимум (зона поддержки)
     const isLocalMin = leftSlice.every(p => p >= price) && rightSlice.every(p => p >= price);
     if (isLocalMin) {
       zones.push({ type: 'support', price, strength: 1 });
@@ -253,12 +434,10 @@ function findLiquidityZones(prices, period = 20) {
   return zones;
 }
 
-// Найти ближайшую зону ликвидности
 function findNearestLiquidityZone(currentPrice, zones, type) {
   const relevantZones = zones.filter(z => z.type === type);
   if (relevantZones.length === 0) return null;
   
-  // Сортируем по близости к текущей цене
   relevantZones.sort((a, b) => {
     return Math.abs(a.price - currentPrice) - Math.abs(b.price - currentPrice);
   });
@@ -273,7 +452,6 @@ function generateTraderComment(signal) {
   const adx = signal.indicators.adx;
   const confidence = signal.confidence;
   
-  // Комментарии по уверенности
   if (confidence >= 85) {
     comments.push('Сильный сетап, все индикаторы подтверждают.');
   } else if (confidence >= 70) {
@@ -282,21 +460,18 @@ function generateTraderComment(signal) {
     comments.push('Сигнал слабый, ждём подтверждения объёма.');
   }
   
-  // Комментарии по RSI
   if (rsi < 25) {
     comments.push('Экстремальная перепроданность — возможен сильный отскок.');
   } else if (rsi > 75) {
     comments.push('Экстремальная перекупленность — вероятна коррекция.');
   }
   
-  // Комментарии по ADX
   if (adx > 35) {
     comments.push('Сильный тренд, импульс подтверждён.');
   } else if (adx < 20) {
     comments.push('Слабый тренд, рынок в консолидации.');
   }
   
-  // Комментарии по подтверждениям
   if (signal.confirmations.includes('ADX_STRONG_TREND') && signal.confirmations.includes('HIGH_VOLUME')) {
     comments.push('Объёмы растут на сильном тренде — хороший момент.');
   }
@@ -308,24 +483,20 @@ function generateTraderComment(signal) {
   return comments.length > 0 ? comments.join(' ') : 'Стандартный сетап.';
 }
 
-
 // ==================== АНАЛИЗ СИГНАЛА ====================
 function analyzeSignal(coin, priceHistory) {
   const price = coin.current_price;
   const volume = coin.total_volume;
   const marketCap = coin.market_cap;
   
-  // ФИЛЬТР: Исключаем стейблкоины (надежный фильтр)
   if (STABLECOINS.includes(coin.symbol.toLowerCase())) {
     return null;
   }
   
-  // Фильтры
   if (volume < CONFIG.minVolume) return null;
   if (marketCap < CONFIG.minMarketCap) return null;
-  if (priceHistory.length < 100) return null;
+  if (priceHistory.length < 50) return null;
   
-  // Индикаторы
   const rsi = calculateRSI(priceHistory);
   const macd = calculateMACD(priceHistory);
   const bb = calculateBollingerBands(priceHistory);
@@ -333,21 +504,17 @@ function analyzeSignal(coin, priceHistory) {
   const sma20 = calculateSMA(priceHistory, 20);
   const sma50 = calculateSMA(priceHistory, 50);
   
-  // EMA индикаторы (НОВОЕ!)
   const ema20 = calculateEMA(priceHistory, 20);
   const ema50 = calculateEMA(priceHistory, 50);
   const ema100 = calculateEMA(priceHistory, 100);
   
-  // НОВЫЕ ИНДИКАТОРЫ
-  const stoch = calculateStochastic(priceHistory); 
-  const atr = calculateATR(priceHistory); 
-  const adx = calculateADX(priceHistory); 
+  const stoch = calculateStochastic(priceHistory);
+  const atr = calculateATR(priceHistory);
+  const adx = calculateADX(priceHistory);
   
-  // Подсчет качества и подтверждений
   let qualityScore = 0;
   const confirmations = [];
   
-  // RSI
   if (rsi < 30) {
     qualityScore += 2;
     confirmations.push('RSI_OVERSOLD');
@@ -356,7 +523,6 @@ function analyzeSignal(coin, priceHistory) {
     confirmations.push('RSI_OVERBOUGHT');
   }
   
-  // MACD
   if (macd.histogram > 0 && macd.macd > macd.signal) {
     qualityScore += 1;
     confirmations.push('MACD_BULLISH');
@@ -365,7 +531,6 @@ function analyzeSignal(coin, priceHistory) {
     confirmations.push('MACD_BEARISH');
   }
   
-  // Bollinger Bands
   if (price < bb.lower) {
     qualityScore += 2;
     confirmations.push('BB_OVERSOLD');
@@ -374,7 +539,6 @@ function analyzeSignal(coin, priceHistory) {
     confirmations.push('BB_OVERBOUGHT');
   }
   
-  // НОВЫЙ БЛОК: Stochastic Oscillator
   if (stoch.k < 20) {
     qualityScore += 2;
     confirmations.push('STOCH_OVERSOLD');
@@ -383,7 +547,6 @@ function analyzeSignal(coin, priceHistory) {
     confirmations.push('STOCH_OVERBOUGHT');
   }
   
-  // НОВЫЙ БЛОК: ADX (Сила тренда)
   if (adx > 30) {
     qualityScore += 2;
     confirmations.push('ADX_STRONG_TREND');
@@ -391,7 +554,6 @@ function analyzeSignal(coin, priceHistory) {
     confirmations.push('ADX_FLAT_MARKET');
   }
   
-  // Тренд
   if (sma20 > sma50) {
     qualityScore += 1;
     confirmations.push('TREND_BULLISH');
@@ -400,7 +562,6 @@ function analyzeSignal(coin, priceHistory) {
     confirmations.push('TREND_BEARISH');
   }
   
-  // EMA выравнивание (НОВОЕ!)
   if (ema20 && ema50 && ema100) {
     if (ema20 > ema50 && ema50 > ema100) {
       qualityScore += 2;
@@ -411,24 +572,20 @@ function analyzeSignal(coin, priceHistory) {
     }
   }
   
-  // Объем
   if (volume > CONFIG.minVolume * 2) {
     qualityScore += 1;
     confirmations.push('HIGH_VOLUME');
   }
   
-  // Минимальные требования
   if (qualityScore < CONFIG.minQualityScore) return null;
   if (confirmations.length < 2) return null;
   
-  // Определение сигнала
   let signal = null;
   let confidence = 0;
   
-  // LONG сигнал (УЖЕСТОЧЕНО)
   if (
-    (rsi < 35 && macd.histogram > 0 && stoch.k < 30 && adx > 25) || // RSI + MACD + Stoch + Strong Trend
-    (price < bb.lower && rsi < 40 && stoch.k < 40) ||               // BB Oversold + RSI + Stoch
+    (rsi < 35 && macd.histogram > 0 && stoch.k < 30 && adx > 25) ||
+    (price < bb.lower && rsi < 40 && stoch.k < 40) ||
     (rsi < 30 && sma20 > sma50)
   ) {
     signal = 'LONG';
@@ -438,10 +595,9 @@ function analyzeSignal(coin, priceHistory) {
       95
     );
   }
-  // SHORT сигнал (УЖЕСТОЧЕНО)
   else if (
-    (rsi > 65 && macd.histogram < 0 && stoch.k > 70 && adx > 25) || // RSI + MACD + Stoch + Strong Trend
-    (price > bb.upper && rsi > 60 && stoch.k > 60) ||                // BB Overbought + RSI + Stoch
+    (rsi > 65 && macd.histogram < 0 && stoch.k > 70 && adx > 25) ||
+    (price > bb.upper && rsi > 60 && stoch.k > 60) ||
     (rsi > 70 && sma20 < sma50)
   ) {
     signal = 'SHORT';
@@ -453,28 +609,21 @@ function analyzeSignal(coin, priceHistory) {
   }
   
   if (!signal || confidence < CONFIG.minConfidence) return null;
-   // Расчет цен (УЛУЧШЕННЫЙ с зонами ликвидности)
+  
   const entry = price;
   let sl, tp, rrRatio;
   let liquidityZoneUsed = false;
   
-  // Находим зоны ликвидности
   const liquidityZones = findLiquidityZones(priceHistory, 20);
-  
   const atrMultiplier = 2.5;
   const slDistance = atr * atrMultiplier;
   
   if (signal === 'LONG') {
-    // Базовый стоп-лосс
     let calculatedSL = entry - slDistance;
-    
-    // Ищем ближайшую зону поддержки ниже цены
     const supportZone = findNearestLiquidityZone(entry, liquidityZones, 'support');
     
-    // Если есть зона поддержки и она ниже цены, размещаем стоп чуть ниже неё
     if (supportZone && supportZone.price < entry) {
-      const zoneBasedSL = supportZone.price * 0.997; // На 0.3% ниже зоны
-      // Используем зону, если она не слишком далеко
+      const zoneBasedSL = supportZone.price * 0.997;
       if (entry - zoneBasedSL < slDistance * 1.5) {
         calculatedSL = zoneBasedSL;
         liquidityZoneUsed = true;
@@ -485,14 +634,11 @@ function analyzeSignal(coin, priceHistory) {
     tp = entry + (entry - sl) * CONFIG.minRRRatio;
     rrRatio = (tp - entry) / (entry - sl);
   } else {
-    // Базовый стоп-лосс
     let calculatedSL = entry + slDistance;
-    
-    // Ищем ближайшую зону сопротивления выше цены
     const resistanceZone = findNearestLiquidityZone(entry, liquidityZones, 'resistance');
     
     if (resistanceZone && resistanceZone.price > entry) {
-      const zoneBasedSL = resistanceZone.price * 1.003; // На 0.3% выше зоны
+      const zoneBasedSL = resistanceZone.price * 1.003;
       if (zoneBasedSL - entry < slDistance * 1.5) {
         calculatedSL = zoneBasedSL;
         liquidityZoneUsed = true;
@@ -506,7 +652,6 @@ function analyzeSignal(coin, priceHistory) {
   
   if (rrRatio < CONFIG.minRRRatio) return null;
   
-  // Определение уровня
   const isGodTier = 
     qualityScore >= CONFIG.godTier.qualityScore &&
     confidence >= CONFIG.godTier.confidence &&
@@ -519,7 +664,7 @@ function analyzeSignal(coin, priceHistory) {
   
   if (!isGodTier && !isPremium) return null;
   
-  return {
+  const signalData = {
     pair: `${coin.symbol.toUpperCase()}/USDT`,
     signal,
     entry: parseFloat(entry.toFixed(6)),
@@ -544,44 +689,19 @@ function analyzeSignal(coin, priceHistory) {
     liquidityZoneUsed,
     timestamp: new Date()
   };
-}
-
-// ==================== ПОЛУЧЕНИЕ ДАННЫХ ====================
-async function fetchMarketData() {
-  try {
-    // ВНИМАНИЕ: CoinGecko API с sparkline=true дает только дневные цены.
-    // Для реального скальпинга вам нужно будет переключиться на эндпоинт OHLC 
-    // и запрашивать 1-часовые свечи.
-    const url = `${CONFIG.apiUrl}/coins/markets?vs_currency=usd&order=volume_desc&per_page=${CONFIG.topCoins}&page=1&sparkline=true&price_change_percentage=1h,24h`;
-    
-    const headers = {
-      'Accept': 'application/json',
-      'User-Agent': 'Mozilla/5.0'
-    };
-    
-    // Добавляем API ключ если есть
-    if (COINGECKO_API_KEY) {
-      headers['x-cg-demo-api-key'] = COINGECKO_API_KEY;
-    }
-    
-    console.log('📡 Запрос к CoinGecko API...');
-    const response = await axios.get(url, { headers });
-    
-    if (response.status !== 200) {
-      console.error(`❌ Ошибка CoinGecko API: ${response.status}`);
-      return null;
-    }
-    
-    console.log(`✅ Получено ${response.data.length} монет.`);
-    return response.data;
-  } catch (error) {
-    console.error('❌ Ошибка получения данных CoinGecko:', error.message);
-    return null;
+  
+  // Добавляем реальные данные из Binance если есть
+  if (coin._binanceData) {
+    signalData.realVolume = coin._binanceData.volume;
+    signalData.binanceSymbol = coin._binanceData.symbol;
   }
+  
+  return signalData;
 }
 
+// ==================== ГЕНЕРАЦИЯ СИГНАЛОВ ====================
 async function generateSignals() {
-  console.log('🔍 Генерация сигналов...');
+  console.log('🔍 Генерация сигналов на реальных данных...');
   
   const marketData = await fetchMarketData();
   
@@ -590,28 +710,43 @@ async function generateSignals() {
     return [];
   }
   
-  const signals = marketData
-    // ФИЛЬТР: Исключаем стейблкоины
-    .filter(coin => !STABLECOINS.includes(coin.symbol.toLowerCase()))
-    .map(coin => {
-      // Используем sparkline_in_7d.price как priceHistory
+  const signals = [];
+  const coinsToProcess = marketData.slice(0, 50);
+  
+  for (const coin of coinsToProcess) {
+    try {
       const priceHistory = coin.sparkline_in_7d.price;
       
-      // Проверяем, достаточно ли данных для анализа
-      if (!priceHistory || priceHistory.length < 100) {
-        return null;
+      if (!priceHistory || priceHistory.length < 50) {
+        continue;
       }
       
-      return analyzeSignal(coin, priceHistory);
-    })
-    .filter(signal => signal !== null)
-    .sort((a, b) => b.confidence - a.confidence); // Сортируем по уверенности
+      // Проверяем на некорректные данные
+      const validPrices = priceHistory.filter(p => p > 0 && !isNaN(p));
+      if (validPrices.length < priceHistory.length * 0.8) {
+        continue;
+      }
+      
+      const signal = analyzeSignal(coin, priceHistory);
+      if (signal) {
+        signals.push(signal);
+        console.log(`📊 Найден сигнал: ${signal.pair} (${signal.signal}) - Confidence: ${signal.confidence}%`);
+      }
+    } catch (error) {
+      console.error(`❌ Ошибка анализа ${coin.symbol}:`, error.message);
+    }
     
+    // Пауза для избежания лимитов API
+    await new Promise(resolve => setTimeout(resolve, 100));
+  }
+  
+  signals.sort((a, b) => b.confidence - a.confidence);
+  
   console.log(`✅ Сгенерировано ${signals.length} сигналов.`);
   return signals;
 }
 
-// ==================== ОТПРАВКА В TELEGRAM (ОБНОВЛЕННЫЙ ФОРМАТ) ====================
+// ==================== ОТПРАВКА В TELEGRAM ====================
 async function sendSignalToTelegram(signal) {
   if (!CHAT_ID) {
     console.log('⚠️ CHAT_ID не установлен. Сигнал не отправлен.');
@@ -621,11 +756,8 @@ async function sendSignalToTelegram(signal) {
   try {
     const tierEmoji = signal.tier === 'GOD TIER' ? '🔥' : '🟦';
     const tierText = signal.tier === 'GOD TIER' ? 'GOD TIER SIGNAL' : 'PREMIUM SIGNAL';
-    
-    // Эмодзи для направления сигнала
     const directionEmoji = signal.signal === 'LONG' ? '🟢' : '🔴';
     
-    // Форматирование даты и времени
     const timestamp = signal.timestamp.toLocaleString('ru-RU', {
       day: '2-digit',
       month: '2-digit',
@@ -635,7 +767,6 @@ async function sendSignalToTelegram(signal) {
       second: '2-digit'
     }).replace(',', ' —');
     
-    // Генерация комментария
     const comment = generateTraderComment(signal);
     
     const message = `
@@ -688,13 +819,11 @@ async function runSignalsTask() {
       return;
     }
     
-  
-    const signalsToSend = signals; 
-    console.log(`📤 Отправка ${signalsToSend.length} сигналов...`);
+    const signalsToSend = signals.slice(0, 5);
+    console.log(`📤 Отправка ${signalsToSend.length} лучших сигналов...`);
     
     for (const signal of signalsToSend) {
       await sendSignalToTelegram(signal);
-      // Задержка между сообщениями
       await new Promise(resolve => setTimeout(resolve, 2000));
     }
     
@@ -707,23 +836,18 @@ async function runSignalsTask() {
 // ==================== ЗАПУСК ====================
 async function start() {
   try {
-    // Удаляем webhook и запускаем long polling
     await bot.telegram.deleteWebhook();
     console.log('✅ Webhook удален');
     
-    // Получаем информацию о боте
     const botInfo = await bot.telegram.getMe();
     console.log(`✅ Бот подключен: @${botInfo.username}`);
     
-    // Запускаем бота
     bot.launch();
     console.log('✅ Бот запущен (long polling)');
     
-    // Планируем CRON задачу каждые 10 минут (БЫЛО 5)
     cron.schedule('*/10 * * * *', runSignalsTask);
     console.log('✅ CRON задача запланирована (каждые 10 минут)');
     
-    // Первый запуск через 10 секунд
     console.log('⏳ Первый запуск через 10 секунд...\n');
     setTimeout(runSignalsTask, 10000);
     
