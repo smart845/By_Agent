@@ -595,8 +595,8 @@ function analyzeSignal(coin, priceHistory) {
     confidence: Math.round(confidence),
     qualityScore,
     rrRatio: parseFloat(rrRatio.toFixed(2)),
-    tier: isGodTier ? 'GOD TIER' : 'PRE    // Биржа устанавливается в generateSignals
-    const exchange = signal.exchange || 'BINANCE';
+    tier: isGodTier ? 'GOD TIER' : 'PREMIUM',
+    exchange: signal.exchange || 'BINANCE', // Биржа устанавливается в generateSignals
     indicators: {
       rsi: Math.round(rsi),
       volatility: parseFloat(volatility.toFixed(2)),
@@ -730,7 +730,7 @@ async function fetchBinanceKlines(symbol) {
     }
 
     // K-line: [timestamp, open, high, low, close, volume, ...]
-    // Нам нужна цена закрытия (индекс 4)
+    // Нам нужна цена закрытия (индекс 4). Binance возвращает от старого к новому.
     const prices = response.data.map(kline => parseFloat(kline[4]));
     return prices;
   } catch (error) {
@@ -759,7 +759,8 @@ async function fetchBybitKlines(symbol) {
 
     // K-line: [timestamp, open, high, low, close, volume, ...]
     // Нам нужна цена закрытия (индекс 4). Bybit возвращает массив массивов-строк.
-    const prices = response.data.result.list.map(kline => parseFloat(kline[4])).reverse(); // Bybit возвращает от нового к старому, нужно развернуть
+    // Важно: Bybit возвращает от нового к старому, поэтому используем .reverse()
+    const prices = response.data.result.list.map(kline => parseFloat(kline[4])).reverse(); 
     return prices;
   } catch (error) {
     console.error(`❌ Ошибка получения K-lines для ${symbol}:`, error.message);
