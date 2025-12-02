@@ -1,22 +1,13 @@
 {
-  "name": "bybit-telegram-bot",
+  "name": "crypto-signals-bot",
   "version": "1.0.0",
-  "description": "Telegram bot for Bybit signals",
   "main": "bot.js",
   "scripts": {
-    "start": "node bot.js",
-    "dev": "node bot.js"
+    "start": "node bot.js"
   },
   "dependencies": {
     "telegraf": "^4.16.3",
-    "axios": "^1.6.2",
-    "node-cron": "^3.0.3",
-    "https-proxy-agent": "^7.0.2"
-  },
-  "engines": {
-    "node": ">=16.0.0"
-  },
-  "keywords": ["telegram", "bot", "bybit", "crypto"],
-  "author": "Your Name",
-  "license": "MIT"
+    "axios": "^1.6.0",
+    "node-cron": "^3.0.0"
+  }
 }
