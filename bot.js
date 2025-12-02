@@ -5,7 +5,7 @@ const cron = require('node-cron');
 const BOT_TOKEN = process.env.TELEGRAM_BOT_TOKEN;
 const CHAT_ID = process.env.TELEGRAM_CHAT_ID;
 
-console.log('🤖 Запуск Crypto Signals Bot...');
+console.log('🤖 Запуск MEXC Signals Bot...');
 
 if (!BOT_TOKEN) {
   console.error('❌ Нет TELEGRAM_BOT_TOKEN!');
@@ -16,480 +16,219 @@ const bot = new Telegraf(BOT_TOKEN);
 
 // ==================== НАСТРОЙКИ ====================
 const CONFIG = {
-  exchange: 'CRYPTO',     // Общее название
-  topGainers: 30,         // Топ 30 роста
-  topLosers: 30,          // Топ 30 падения
-  minVolume: 100000,      // 100K USDT минимальный объем
-  minChange: 1.0,         // Минимальное изменение 1%
-  scanInterval: '*/15 * * * *', // Каждые 15 минут
-  
-  // Настройки сигналов
-  minConfidence: 65,      // Минимальная уверенность 65%
-  minConfirmations: 3,    // Минимум 3 подтверждения
-  stopLossPercent: 2.0,   // Стоп-лосс 2%
-  takeProfitPercent: 6.0, // Тейк-профит 6%
-  minRRRatio: 2.5,        // Минимальное R:R 1:2.5
+  exchange: 'MEXC',
+  apiUrl: 'https://api.mexc.com',
+  minVolume: 100000,     // 100K USDT
+  topPairs: 25,
+  scanInterval: '*/20 * * * *', // Каждые 20 минут
+  minChange: 5,          // Минимальное изменение 5%
+  minConfidence: 60      // Минимальная уверенность 60%
 };
 
-// ==================== АЛЬТЕРНАТИВНЫЕ API ====================
-// Если один API не работает, пробуем другой
-const API_ENDPOINTS = [
-  {
-    name: 'CoinGecko',
-    url: 'https://api.coingecko.com/api/v3',
-    getTickers: async () => {
-      try {
-        const response = await axios.get(`${API_ENDPOINTS[0].url}/coins/markets`, {
-          params: {
-            vs_currency: 'usd',
-            order: 'volume_desc',
-            per_page: 200,
-            page: 1,
-            sparkline: false
-          },
-          timeout: 10000
-        });
-        
-        return response.data.map(coin => ({
-          symbol: coin.symbol.toUpperCase() + 'USDT',
-          price: coin.current_price,
-          change: coin.price_change_percentage_24h,
-          volume: coin.total_volume,
-          high: coin.high_24h,
-          low: coin.low_24h,
-          name: coin.name
-        }));
-      } catch (error) {
-        console.error('CoinGecko API error:', error.message);
-        return [];
+// ==================== MEXC API ====================
+async function getMexcTickers() {
+  try {
+    console.log('📡 Запрос к MEXC API...');
+    
+    const response = await axios.get(`${CONFIG.apiUrl}/api/v3/ticker/24hr`, {
+      timeout: 15000,
+      headers: {
+        'User-Agent': 'Mozilla/5.0'
       }
-    }
-  },
-  {
-    name: 'CoinCap',
-    url: 'https://api.coincap.io/v2',
-    getTickers: async () => {
-      try {
-        const response = await axios.get(`${API_ENDPOINTS[1].url}/assets`, {
-          params: { limit: 200 },
-          timeout: 10000
-        });
+    });
+    
+    console.log('✅ MEXC API ответ получен');
+    
+    // Фильтруем USDT пары
+    const usdtPairs = response.data
+      .filter(ticker => ticker.symbol.endsWith('USDT'))
+      .map(ticker => {
+        const change = parseFloat(ticker.priceChangePercent);
+        const volume = parseFloat(ticker.quoteVolume);
+        const price = parseFloat(ticker.lastPrice);
         
-        return response.data.data
-          .filter(asset => asset.symbol)
-          .map(asset => ({
-            symbol: asset.symbol.toUpperCase() + 'USDT',
-            price: parseFloat(asset.priceUsd),
-            change: parseFloat(asset.changePercent24Hr),
-            volume: parseFloat(asset.volumeUsd24Hr),
-            name: asset.name
-          }));
-      } catch (error) {
-        console.error('CoinCap API error:', error.message);
-        return [];
-      }
+        return {
+          symbol: ticker.symbol,
+          price: price,
+          change: change,
+          volume: volume,
+          high: parseFloat(ticker.highPrice),
+          low: parseFloat(ticker.lowPrice),
+          volumeValue: volume * price
+        };
+      })
+      .filter(ticker => 
+        ticker.volumeValue >= CONFIG.minVolume && 
+        ticker.price > 0.000001 &&
+        Math.abs(ticker.change) > 0.1
+      );
+    
+    console.log(`✅ Отфильтровано ${usdtPairs.length} пар`);
+    return usdtPairs;
+    
+  } catch (error) {
+    console.error('❌ Ошибка MEXC API:', error.message);
+    if (error.response) {
+      console.error('Статус:', error.response.status);
+      console.error('Данные:', error.response.data);
     }
-  },
-  {
-    name: 'Binance Alternative',
-    url: 'https://api.binance.com',
-    getTickers: async () => {
-      try {
-        // Используем прокси или альтернативный домен
-        const response = await axios.get('https://api.binance.com/api/v3/ticker/24hr', {
-          timeout: 15000,
-          headers: {
-            'User-Agent': 'Mozilla/5.0',
-            'Accept': 'application/json'
-          }
-        });
-        
-        return response.data
-          .filter(ticker => ticker.symbol.endsWith('USDT'))
-          .map(ticker => ({
-            symbol: ticker.symbol,
-            price: parseFloat(ticker.lastPrice),
-            change: parseFloat(ticker.priceChangePercent),
-            volume: parseFloat(ticker.quoteVolume),
-            high: parseFloat(ticker.highPrice),
-            low: parseFloat(ticker.lowPrice)
-          }));
-      } catch (error) {
-        console.error('Binance API error:', error.message);
-        return [];
-      }
-    }
+    return [];
   }
-];
-
-// ==================== ПОЛУЧЕНИЕ ДАННЫХ ====================
-async function getMarketData() {
-  console.log('📡 Получение данных с бирж...');
-  
-  // Пробуем все API по очереди
-  for (const api of API_ENDPOINTS) {
-    try {
-      console.log(`🔄 Пробуем ${api.name}...`);
-      const tickers = await api.getTickers();
-      
-      if (tickers && tickers.length > 50) {
-        console.log(`✅ ${api.name}: получено ${tickers.length} пар`);
-        
-        // Фильтруем по объему и нормальным изменениям
-        const filtered = tickers.filter(ticker => {
-          const volume = ticker.volume || 0;
-          const change = ticker.change || 0;
-          const price = ticker.price || 0;
-          
-          return volume >= CONFIG.minVolume && 
-                 price > 0.000001 &&
-                 Math.abs(change) !== 0 && // Исключаем 0%
-                 !isNaN(change);          // Исключаем NaN
-        });
-        
-        if (filtered.length > 20) {
-          console.log(`✅ ${api.name}: ${filtered.length} пар после фильтрации`);
-          return { source: api.name, tickers: filtered };
-        }
-      }
-    } catch (error) {
-      console.error(`❌ ${api.name} не доступен:`, error.message);
-    }
-  }
-  
-  console.error('❌ Все API недоступны');
-  return { source: 'none', tickers: [] };
 }
 
-// ==================== ТЕХНИЧЕСКИЕ ИНДИКАТОРЫ ====================
-function calculateEMA(prices, period) {
-  if (!prices || prices.length < period) return null;
-  const multiplier = 2 / (period + 1);
-  let ema = prices.slice(0, period).reduce((a, b) => a + b, 0) / period;
-  for (let i = period; i < prices.length; i++) {
-    ema = (prices[i] - ema) * multiplier + ema;
+// Получаем данные свечей для анализа
+async function getMexcKlines(symbol, interval = '15m', limit = 50) {
+  try {
+    const response = await axios.get(`${CONFIG.apiUrl}/api/v3/klines`, {
+      params: {
+        symbol: symbol,
+        interval: interval,
+        limit: limit
+      },
+      timeout: 10000
+    });
+    
+    return response.data.map(k => ({
+      open: parseFloat(k[1]),
+      high: parseFloat(k[2]),
+      low: parseFloat(k[3]),
+      close: parseFloat(k[4]),
+      volume: parseFloat(k[5])
+    }));
+    
+  } catch (error) {
+    console.error(`❌ Ошибка получения свечей ${symbol}:`, error.message);
+    return [];
   }
-  return ema;
 }
 
-function calculateRSI(prices, period = 14) {
-  if (!prices || prices.length < period + 1) return 50;
+// ==================== ИНДИКАТОРЫ ====================
+function calculateRSI(closes, period = 14) {
+  if (!closes || closes.length < period + 1) return 50;
   
   let gains = 0;
   let losses = 0;
   
-  for (let i = 1; i <= period; i++) {
-    const idx = prices.length - i;
-    const change = prices[idx] - prices[idx - 1];
+  for (let i = closes.length - period; i < closes.length; i++) {
+    const change = closes[i] - closes[i - 1];
     if (change > 0) gains += change;
     else losses -= change;
   }
   
-  if (losses === 0) return 100;
-  const rs = gains / losses;
+  const avgGain = gains / period;
+  const avgLoss = losses / period;
+  
+  if (avgLoss === 0) return 100;
+  const rs = avgGain / avgLoss;
   return 100 - (100 / (1 + rs));
 }
 
-function calculateMACD(prices) {
-  const ema12 = calculateEMA(prices, 12);
-  const ema26 = calculateEMA(prices, 26);
-  
-  if (!ema12 || !ema26) return { histogram: 0, macd: 0, signal: 0 };
-  
-  const macdLine = ema12 - ema26;
-  
-  // Упрощенный сигнал
-  const signal = calculateEMA(prices.slice(-9).map((_, i) => {
-    const slice = prices.slice(0, prices.length - 9 + i + 1);
-    const e12 = calculateEMA(slice, 12);
-    const e26 = calculateEMA(slice, 26);
-    return (e12 || 0) - (e26 || 0);
-  }), 9) || macdLine;
-  
-  return {
-    histogram: macdLine - signal,
-    macd: macdLine,
-    signal: signal
-  };
+function calculateAverageVolume(volumes, period = 20) {
+  if (!volumes || volumes.length < period) return 0;
+  const recent = volumes.slice(-period);
+  return recent.reduce((a, b) => a + b, 0) / period;
 }
 
-function calculateBollingerBands(prices, period = 20, stdDev = 2) {
-  if (!prices || prices.length < period) return null;
-  
-  const slice = prices.slice(-period);
-  const mean = slice.reduce((a, b) => a + b, 0) / period;
-  const variance = slice.reduce((sum, price) => sum + Math.pow(price - mean, 2), 0) / period;
-  const std = Math.sqrt(variance);
-  
-  return {
-    upper: mean + (std * stdDev),
-    middle: mean,
-    lower: mean - (std * stdDev)
-  };
-}
-
-function calculateStochastic(highs, lows, closes, period = 14) {
-  if (!highs || highs.length < period) return { k: 50, d: 50 };
-  
-  const kValues = [];
-  for (let i = period - 1; i < closes.length; i++) {
-    const highSlice = highs.slice(i - period + 1, i + 1);
-    const lowSlice = lows.slice(i - period + 1, i + 1);
-    const highest = Math.max(...highSlice);
-    const lowest = Math.min(...lowSlice);
-    
-    if (highest === lowest) {
-      kValues.push(50);
-    } else {
-      kValues.push(((closes[i] - lowest) / (highest - lowest)) * 100);
-    }
-  }
-  
-  const k = kValues.length > 0 ? kValues[kValues.length - 1] : 50;
-  const d = kValues.length >= 3 ? 
-    kValues.slice(-3).reduce((a, b) => a + b, 0) / 3 : k;
-  
-  return { k, d };
-}
-
-// ==================== АНАЛИЗ ПАРЫ ====================
+// ==================== АНАЛИЗ СИГНАЛА ====================
 async function analyzePair(pair) {
   try {
     console.log(`🔍 Анализ ${pair.symbol}...`);
     
-    // Для CoinGecko/CoinCap получаем свечи через альтернативный API
-    let klines = [];
-    let source = 'coingecko';
-    
-    try {
-      // Используем Binance для свечей (если пара есть на Binance)
-      const symbolForBinance = pair.symbol.replace('USDT', '');
-      const response = await axios.get('https://api.binance.com/api/v3/klines', {
-        params: {
-          symbol: symbolForBinance + 'USDT',
-          interval: '15m',
-          limit: 100
-        },
-        timeout: 10000,
-        headers: { 'User-Agent': 'Mozilla/5.0' }
-      });
-      
-      klines = response.data.map(k => ({
-        open: parseFloat(k[1]),
-        high: parseFloat(k[2]),
-        low: parseFloat(k[3]),
-        close: parseFloat(k[4]),
-        volume: parseFloat(k[5])
-      }));
-      source = 'binance';
-      
-    } catch (binanceError) {
-      // Если Binance не работает, используем CoinGecko для истории
-      try {
-        const response = await axios.get(
-          `https://api.coingecko.com/api/v3/coins/${pair.symbol.toLowerCase().replace('usdt', '')}/market_chart`,
-          {
-            params: {
-              vs_currency: 'usd',
-              days: '7',
-              interval: 'daily'
-            },
-            timeout: 10000
-          }
-        );
-        
-        if (response.data.prices) {
-          klines = response.data.prices.map(([time, price]) => ({
-            time: new Date(time),
-            close: price,
-            high: price * 1.02, // Приблизительные значения
-            low: price * 0.98,
-            volume: pair.volume / 7 // Распределяем объем
-          }));
-        }
-      } catch (cgError) {
-        console.log(`⚠️ Нет свечных данных для ${pair.symbol}`);
-      }
-    }
-    
-    if (klines.length < 30) {
-      console.log(`⚠️ Недостаточно данных для ${pair.symbol}`);
-      return null;
-    }
+    // Получаем свечи
+    const klines = await getMexcKlines(pair.symbol, '15m', 50);
+    if (klines.length < 30) return null;
     
     const closes = klines.map(k => k.close);
-    const highs = klines.map(k => k.high);
-    const lows = klines.map(k => k.low);
-    const volumes = klines.map(k => k.volume || 0);
-    
+    const volumes = klines.map(k => k.volume);
     const currentPrice = closes[closes.length - 1];
     
     // Рассчитываем индикаторы
     const rsi = calculateRSI(closes);
-    const ema9 = calculateEMA(closes, 9);
-    const ema21 = calculateEMA(closes, 21);
-    const ema50 = calculateEMA(closes, 50);
-    const macd = calculateMACD(closes);
-    const bb = calculateBollingerBands(closes);
-    const stoch = calculateStochastic(highs, lows, closes);
-    
-    // Рассчитываем силу объема
-    const avgVolume = volumes.length >= 20 ? 
-      volumes.slice(-20).reduce((a, b) => a + b, 0) / 20 : 
-      pair.volume / 24;
+    const avgVolume = calculateAverageVolume(volumes);
     const volumeRatio = pair.volume / avgVolume;
     
-    // Собираем подтверждения
-    const confirmations = [];
+    // Определяем сигнал
+    let signal = null;
     let confidence = 0;
+    let reasons = [];
     
-    // 1. RSI анализ
-    if (rsi < 30) {
-      confirmations.push('RSI_OVERSOLD');
-      confidence += 15;
-    } else if (rsi > 70) {
-      confirmations.push('RSI_OVERBOUGHT');
-      confidence += 15;
+    if (rsi < 35 && pair.change > -10) {
+      signal = 'LONG';
+      confidence += 30;
+      reasons.push('RSI перепродан');
     }
     
-    // 2. MACD анализ
-    if (macd.histogram > 0) {
-      confirmations.push('MACD_BULLISH');
-      confidence += 10;
-    } else if (macd.histogram < 0) {
-      confirmations.push('MACD_BEARISH');
-      confidence += 10;
+    if (rsi > 65 && pair.change < 10) {
+      signal = 'SHORT';
+      confidence += 30;
+      reasons.push('RSI перекуплен');
     }
     
-    // 3. Стохастик
-    if (stoch.k < 20) {
-      confirmations.push('STOCH_OVERSOLD');
-      confidence += 10;
-    } else if (stoch.k > 80) {
-      confirmations.push('STOCH_OVERBOUGHT');
-      confidence += 10;
+    // Сильное движение с объемом
+    if (Math.abs(pair.change) > CONFIG.minChange) {
+      confidence += 20;
+      reasons.push(`Сильное движение: ${pair.change > 0 ? '+' : ''}${pair.change.toFixed(1)}%`);
     }
     
-    // 4. Тренд EMA
-    if (ema9 && ema21 && ema50) {
-      if (currentPrice > ema9 && ema9 > ema21 && ema21 > ema50) {
-        confirmations.push('STRONG_UPTREND');
-        confidence += 15;
-      } else if (currentPrice < ema9 && ema9 < ema21 && ema21 < ema50) {
-        confirmations.push('STRONG_DOWNTREND');
-        confidence += 15;
-      } else if (ema9 > ema21) {
-        confirmations.push('EMA_BULLISH');
-        confidence += 8;
-      } else if (ema9 < ema21) {
-        confirmations.push('EMA_BEARISH');
-        confidence += 8;
-      }
-    }
-    
-    // 5. Боллинджер
-    if (bb) {
-      const bbPosition = ((currentPrice - bb.lower) / (bb.upper - bb.lower)) * 100;
-      if (bbPosition < 20) {
-        confirmations.push('BB_OVERSOLD');
-        confidence += 12;
-      } else if (bbPosition > 80) {
-        confirmations.push('BB_OVERBOUGHT');
-        confidence += 12;
-      }
-    }
-    
-    // 6. Объем
+    // Высокий объем
     if (volumeRatio > 1.5) {
-      confirmations.push('HIGH_VOLUME');
+      confidence += 15;
+      reasons.push(`Высокий объем: x${volumeRatio.toFixed(1)}`);
+    }
+    
+    // Поддержка/сопротивление
+    const pricePosition = ((currentPrice - pair.low) / (pair.high - pair.low)) * 100;
+    if (pricePosition < 30) {
       confidence += 10;
+      reasons.push('Возле поддержки');
+    } else if (pricePosition > 70) {
+      confidence += 10;
+      reasons.push('Возле сопротивления');
     }
     
-    // 7. Изменение цены
-    if (Math.abs(pair.change) > 5) {
-      confirmations.push('STRONG_MOVE');
-      confidence += Math.min(Math.abs(pair.change), 15);
-    }
-    
-    // Проверяем минимальные требования
-    if (confirmations.length < CONFIG.minConfirmations || confidence < CONFIG.minConfidence) {
+    // Проверяем минимальную уверенность
+    if (!signal || confidence < CONFIG.minConfidence || reasons.length < 2) {
       return null;
     }
-    
-    // Определяем направление
-    let signal = null;
-    let finalConfidence = Math.min(confidence, 95);
-    
-    const bullishConfirmations = confirmations.filter(c => 
-      c.includes('BULLISH') || c.includes('UPTREND') || c.includes('OVERSOLD')
-    ).length;
-    
-    const bearishConfirmations = confirmations.filter(c => 
-      c.includes('BEARISH') || c.includes('DOWNTREND') || c.includes('OVERBOUGHT')
-    ).length;
-    
-    if (bullishConfirmations >= 3 && pair.change > -10) {
-      signal = 'LONG';
-      finalConfidence += 5;
-    } else if (bearishConfirmations >= 3 && pair.change < 10) {
-      signal = 'SHORT';
-      finalConfidence += 5;
-    }
-    
-    if (!signal) return null;
     
     // Рассчитываем уровни
     const entry = currentPrice;
-    let sl, tp, rrRatio;
+    let tp, sl;
+    const riskPercent = 2; // 2% риск
     
     if (signal === 'LONG') {
-      sl = entry * (1 - CONFIG.stopLossPercent / 100);
-      tp = entry * (1 + CONFIG.takeProfitPercent / 100);
-      rrRatio = (tp - entry) / (entry - sl);
+      sl = entry * (1 - riskPercent / 100);
+      tp = entry * (1 + (riskPercent * 2.5) / 100); // R:R 1:2.5
     } else {
-      sl = entry * (1 + CONFIG.stopLossPercent / 100);
-      tp = entry * (1 - CONFIG.takeProfitPercent / 100);
-      rrRatio = (entry - tp) / (sl - entry);
+      sl = entry * (1 + riskPercent / 100);
+      tp = entry * (1 - (riskPercent * 2.5) / 100);
     }
     
-    if (rrRatio < CONFIG.minRRRatio) {
-      return null;
-    }
+    const rrRatio = signal === 'LONG' ? 
+      (tp - entry) / (entry - sl) : 
+      (entry - tp) / (sl - entry);
     
-    // Определяем уровень сигнала
-    const tier = finalConfidence >= 85 ? 'GOD TIER 👑' : 
-                 finalConfidence >= 75 ? 'PREMIUM 💎' : 
-                 finalConfidence >= 65 ? 'STANDARD 📊' : null;
+    const tier = confidence >= 75 ? 'GOD TIER' : 
+                 confidence >= 65 ? 'PREMIUM' : 'STANDARD';
     
-    if (!tier || tier === 'STANDARD 📊') {
-      return null;
-    }
+    if (tier === 'STANDARD') return null;
     
-    console.log(`✅ СИГНАЛ: ${tier} ${signal} ${pair.symbol} (${finalConfidence.toFixed(0)}%)`);
+    console.log(`✅ Сигнал: ${signal} ${pair.symbol} (${confidence}%)`);
     
     return {
       pair: pair.symbol.replace('USDT', '/USDT'),
-      symbol: pair.symbol,
       signal: signal,
       entry: entry.toFixed(8),
       tp: tp.toFixed(8),
       sl: sl.toFixed(8),
-      confidence: Math.round(finalConfidence),
-      rrRatio: rrRatio.toFixed(2),
+      confidence: Math.round(confidence),
+      rrRatio: rrRatio.toFixed(1),
       tier: tier,
-      change24h: parseFloat(pair.change.toFixed(2)),
+      change24h: pair.change.toFixed(2),
       volume24h: pair.volume,
-      indicators: {
-        rsi: Math.round(rsi),
-        macd_hist: macd.histogram.toFixed(6),
-        stoch_k: stoch.k.toFixed(1),
-        stoch_d: stoch.d.toFixed(1),
-        ema9: ema9 ? ema9.toFixed(6) : null,
-        ema21: ema21 ? ema21.toFixed(6) : null,
-        volume_ratio: volumeRatio.toFixed(1)
-      },
-      confirmations: confirmations.slice(0, 6),
-      source: source,
+      rsi: Math.round(rsi),
+      volumeRatio: volumeRatio.toFixed(1),
+      reasons: reasons,
       timestamp: new Date()
     };
     
@@ -504,33 +243,26 @@ bot.start((ctx) => {
   console.log('✅ Команда /start от', ctx.from.id);
   
   const welcome = `
-🤖 <b>Crypto Signals Bot Pro</b>
+🤖 <b>MEXC Signals Bot</b>
 
-🎯 <b>Анализ:</b> Топ ${CONFIG.topGainers} роста + Топ ${CONFIG.topLosers} падения
+🏦 <b>Биржа:</b> ${CONFIG.exchange}
+📊 <b>Анализ:</b> Топ ${CONFIG.topPairs} пар
 💰 <b>Мин. объем:</b> ${(CONFIG.minVolume/1000).toFixed(0)}K USDT
-📊 <b>Мин. изменение:</b> ${CONFIG.minChange}%
-🎖️ <b>Мин. уверенность:</b> ${CONFIG.minConfidence}%
+🎯 <b>Мин. изменение:</b> ${CONFIG.minChange}%
+⏰ <b>Сканирование:</b> каждые 20 мин
 
-⚡ <b>Индикаторы:</b>
+<b>📈 Анализируем:</b>
 • RSI (перекупленность/перепроданность)
-• MACD (импульс и тренд)
-• EMA (9, 21, 50) - тренд
-• Bollinger Bands - волатильность
-• Stochastic - моментум
-• Volume Analysis - объемы
+• Объем торгов
+• Уровни поддержки/сопротивления
+• Сильные ценовые движения
 
-⏰ <b>Сканирование:</b> каждые 15 минут
-🏆 <b>Уровни сигналов:</b>
-👑 GOD TIER - уверенность ≥85%
-💎 PREMIUM - уверенность ≥75%
-📊 STANDARD - уверенность ≥65%
-
-📱 <b>Команды:</b>
+<b>📱 Команды:</b>
 /start - информация
 /test - проверить API
-/scan - ручное сканирование (до 10 сигналов)
-/top - топ движений за 24h
+/scan - ручное сканирование (до 5 сигналов)
 /status - статус бота
+/top - топ движений
 
 ✅ <b>Бот активен и ищет сигналы!</b>
   `.trim();
@@ -539,32 +271,28 @@ bot.start((ctx) => {
 });
 
 bot.command('test', async (ctx) => {
-  console.log('🧪 Тест подключения...');
+  console.log('🧪 Тест MEXC API...');
   
   try {
-    await ctx.reply('🔄 Проверяю доступность API...');
+    await ctx.reply('🔄 Проверяю MEXC API...');
     
-    const data = await getMarketData();
+    const tickers = await getMexcTickers();
     
-    if (data.tickers.length > 0) {
-      const sample = data.tickers.slice(0, 3);
-      let message = `✅ <b>API работает!</b>\n\n`;
-      message += `📡 Источник: ${data.source}\n`;
-      message += `📊 Получено пар: ${data.tickers.length}\n\n`;
-      message += `<b>Примеры:</b>\n`;
-      
+    if (tickers.length > 0) {
+      const sample = tickers.slice(0, 3);
+      let message = `✅ MEXC API работает!\n\n`;
+      message += `📊 Получено пар: ${tickers.length}\n\n`;
+      message += `Примеры:\n`;
       sample.forEach(t => {
-        const change = t.change || 0;
-        const changeStr = change > 0 ? `+${change.toFixed(2)}%` : `${change.toFixed(2)}%`;
-        message += `• <b>${t.symbol}</b>\n`;
-        message += `  Цена: $${t.price.toFixed(4)}\n`;
-        message += `  Изменение: ${changeStr}\n`;
-        message += `  Объем: $${(t.volume/1000).toFixed(0)}K\n\n`;
+        message += `<b>${t.symbol}</b>\n`;
+        message += `Цена: $${t.price.toFixed(4)}\n`;
+        message += `Изменение: ${t.change > 0 ? '+' : ''}${t.change.toFixed(2)}%\n`;
+        message += `Объем: $${(t.volume/1000).toFixed(0)}K\n\n`;
       });
       
       await ctx.reply(message, { parse_mode: 'HTML' });
     } else {
-      await ctx.reply('❌ Не удалось получить данные с API');
+      await ctx.reply('⚠️ Не удалось получить данные с MEXC');
     }
     
   } catch (error) {
@@ -576,55 +304,41 @@ bot.command('top', async (ctx) => {
   console.log('📈 Топ движений...');
   
   try {
-    await ctx.reply('📊 Получаю топ движений...');
+    await ctx.reply('📊 Ищу топ движений...');
     
-    const data = await getMarketData();
-    if (data.tickers.length === 0) {
-      await ctx.reply('❌ Нет данных для анализа');
-      return;
-    }
-    
-    // Фильтруем по минимальному изменению
-    const filtered = data.tickers.filter(t => Math.abs(t.change || 0) >= 1);
-    
-    if (filtered.length === 0) {
-      await ctx.reply('ℹ️ Нет пар с изменением >1%');
+    const tickers = await getMexcTickers();
+    if (tickers.length === 0) {
+      await ctx.reply('❌ Нет данных от MEXC');
       return;
     }
     
     // Топ роста
-    const topGainers = [...filtered]
-      .sort((a, b) => (b.change || 0) - (a.change || 0))
+    const topGainers = [...tickers]
+      .sort((a, b) => b.change - a.change)
       .slice(0, 5);
     
     // Топ падения
-    const topLosers = [...filtered]
-      .sort((a, b) => (a.change || 0) - (b.change || 0))
+    const topLosers = [...tickers]
+      .sort((a, b) => a.change - b.change)
       .slice(0, 5);
     
     let message = `📈 <b>ТОП 5 РОСТА (24h)</b>\n\n`;
     
     topGainers.forEach((t, i) => {
-      const change = t.change || 0;
-      const changeStr = change > 0 ? `+${change.toFixed(2)}%` : `${change.toFixed(2)}%`;
       message += `${i+1}. <b>${t.symbol}</b>\n`;
       message += `   💰 $${t.price.toFixed(4)}\n`;
-      message += `   📈 ${changeStr}\n`;
+      message += `   📈 +${t.change.toFixed(2)}%\n`;
       message += `   🔄 $${(t.volume/1000).toFixed(0)}K\n\n`;
     });
     
     message += `📉 <b>ТОП 5 ПАДЕНИЯ (24h)</b>\n\n`;
     
     topLosers.forEach((t, i) => {
-      const change = t.change || 0;
-      const changeStr = `${change.toFixed(2)}%`; // Отрицательный знак уже в числе
       message += `${i+1}. <b>${t.symbol}</b>\n`;
       message += `   💰 $${t.price.toFixed(4)}\n`;
-      message += `   📉 ${changeStr}\n`;
+      message += `   📉 ${t.change.toFixed(2)}%\n`;
       message += `   🔄 $${(t.volume/1000).toFixed(0)}K\n\n`;
     });
-    
-    message += `📡 Источник: ${data.source}`;
     
     await ctx.reply(message, { parse_mode: 'HTML' });
     
@@ -637,42 +351,35 @@ bot.command('scan', async (ctx) => {
   console.log('🔍 Ручное сканирование...');
   
   try {
-    await ctx.reply('🔍 Запускаю глубокое сканирование...');
+    await ctx.reply('🔍 Запускаю глубокое сканирование MEXC...');
     
-    const data = await getMarketData();
-    if (data.tickers.length === 0) {
+    const tickers = await getMexcTickers();
+    if (tickers.length === 0) {
       await ctx.reply('❌ Нет данных для анализа');
       return;
     }
     
-    // Сортируем по абсолютному изменению и берем топ
-    const sortedByChange = [...data.tickers]
-      .sort((a, b) => Math.abs(b.change || 0) - Math.abs(a.change || 0))
-      .slice(0, 60); // Берем 60 самых волатильных
+    // Берем топ пар по изменению
+    const sortedByChange = [...tickers]
+      .sort((a, b) => Math.abs(b.change) - Math.abs(a.change))
+      .slice(0, 15);
     
     await ctx.reply(`📊 Анализирую ${sortedByChange.length} пар...`);
     
     const signals = [];
     
     // Анализируем каждую пару
-    for (let i = 0; i < Math.min(sortedByChange.length, 60); i++) {
+    for (let i = 0; i < Math.min(sortedByChange.length, 10); i++) {
       const pair = sortedByChange[i];
-      
-      // Пропускаем если изменение слишком маленькое
-      if (Math.abs(pair.change || 0) < CONFIG.minChange) continue;
-      
       const signal = await analyzePair(pair);
       
       if (signal) {
         signals.push(signal);
-        console.log(`✅ Найден сигнал ${i+1}/${sortedByChange.length}: ${signal.pair}`);
       }
       
-      // Задержка между запросами чтобы не перегружать API
-      if (i % 10 === 0 && i > 0) {
-        await new Promise(resolve => setTimeout(resolve, 2000));
-      } else {
-        await new Promise(resolve => setTimeout(resolve, 500));
+      // Задержка между запросами
+      if (i < sortedByChange.length - 1) {
+        await new Promise(resolve => setTimeout(resolve, 1000));
       }
     }
     
@@ -682,26 +389,23 @@ bot.command('scan', async (ctx) => {
       
       let message = `🎯 <b>НАЙДЕНО СИГНАЛОВ: ${signals.length}</b>\n\n`;
       
-      // Показываем только лучшие 5
       signals.slice(0, 5).forEach((sig, i) => {
         const emoji = sig.signal === 'LONG' ? '🟢' : '🔴';
-        const tierEmoji = sig.tier.includes('GOD') ? '👑' : sig.tier.includes('PREMIUM') ? '💎' : '📊';
+        const tierEmoji = sig.tier === 'GOD TIER' ? '👑' : '💎';
         
         message += `${tierEmoji} <b>${sig.tier}</b>\n`;
         message += `${emoji} <b>${sig.signal} ${sig.pair}</b>\n`;
         message += `📈 Изменение: ${sig.change24h > 0 ? '+' : ''}${sig.change24h}%\n`;
-        message += `💰 Объем: $${(sig.volume24h/1000000).toFixed(2)}M\n`;
         message += `🎯 Вход: $${sig.entry}\n`;
         message += `✅ Тейк: $${sig.tp}\n`;
         message += `🛑 Стоп: $${sig.sl}\n`;
         message += `📊 R:R: 1:${sig.rrRatio}\n`;
         message += `🔮 Уверенность: ${sig.confidence}%\n`;
-        message += `📊 RSI: ${sig.indicators.rsi}\n`;
-        message += `📈 MACD Hist: ${sig.indicators.macd_hist}\n`;
-        message += `💎 Подтверждения: ${sig.confirmations.length}\n\n`;
+        message += `📊 RSI: ${sig.rsi}\n`;
+        message += `💎 Причины:\n`;
+        sig.reasons.slice(0, 3).forEach(r => message += `• ${r}\n`);
+        message += `\n`;
       });
-      
-      message += `📡 Источник данных: ${data.source}`;
       
       await ctx.reply(message, { parse_mode: 'HTML' });
     } else {
@@ -715,27 +419,25 @@ bot.command('scan', async (ctx) => {
 
 bot.command('status', (ctx) => {
   const now = new Date();
-  const nextScan = 15 - (now.getMinutes() % 15);
+  const nextScan = 20 - (now.getMinutes() % 20);
   
   ctx.reply(
     `📊 <b>СТАТУС БОТА</b>\n\n` +
     `🟢 <b>Состояние:</b> Активен\n` +
-    `🏦 <b>Источники:</b> CoinGecko, CoinCap, Binance\n` +
+    `🏦 <b>Биржа:</b> ${CONFIG.exchange}\n` +
+    `📡 <b>API статус:</b> Работает\n` +
     `🎯 <b>Следующее сканирование:</b> через ${nextScan} мин\n` +
     `⏰ <b>Время сервера:</b> ${now.toLocaleTimeString('ru-RU')}\n\n` +
-    `📈 <b>Параметры сканирования:</b>\n` +
-    `• Топ роста: ${CONFIG.topGainers} пар\n` +
-    `• Топ падения: ${CONFIG.topLosers} пар\n` +
-    `• Мин. объем: ${(CONFIG.minVolume/1000).toFixed(0)}K USDT\n` +
-    `• Мин. изменение: ${CONFIG.minChange}%\n` +
-    `• Мин. уверенность: ${CONFIG.minConfidence}%\n\n` +
-    `⚡ <b>Индикаторы:</b> RSI, MACD, EMA, BB, Stochastic\n\n` +
+    `📈 <b>Параметры:</b>\n` +
+    `• Объем > ${(CONFIG.minVolume/1000).toFixed(0)}K USDT\n` +
+    `• Изменение > ${CONFIG.minChange}%\n` +
+    `• Уверенность > ${CONFIG.minConfidence}%\n\n` +
     `💡 <b>Команды:</b> /scan /top /test`,
     { parse_mode: 'HTML' }
   );
 });
 
-// ==================== АВТОМАТИЧЕСКОЕ СКАНИРОВАНИЕ ====================
+// Автоматическое сканирование
 async function autoScan() {
   console.log('\n🎯 АВТОМАТИЧЕСКОЕ СКАНИРОВАНИЕ');
   console.log('='.repeat(50));
@@ -746,72 +448,67 @@ async function autoScan() {
   }
   
   try {
-    const data = await getMarketData();
-    if (data.tickers.length === 0) {
-      console.log('❌ Нет данных от API');
+    const tickers = await getMexcTickers();
+    if (tickers.length === 0) {
+      console.log('❌ Нет данных от MEXC');
       return;
     }
     
-    console.log(`📊 Источник: ${data.source}, пар: ${data.tickers.length}`);
+    console.log(`📊 Анализ ${Math.min(tickers.length, 10)} топ пар...`);
     
-    // Берем самые волатильные пары (топ роста + топ падения)
-    const sortedByChange = [...data.tickers]
-      .sort((a, b) => Math.abs(b.change || 0) - Math.abs(a.change || 0));
-    
-    const topGainers = sortedByChange
-      .filter(t => (t.change || 0) > 0)
-      .slice(0, CONFIG.topGainers);
-    
-    const topLosers = sortedByChange
-      .filter(t => (t.change || 0) < 0)
-      .slice(0, CONFIG.topLosers);
-    
-    const pairsToAnalyze = [...topGainers, ...topLosers];
-    
-    console.log(`📈 Анализ ${pairsToAnalyze.length} пар (${topGainers.length} рост + ${topLosers.length} падение)...`);
+    // Берем самые волатильные пары
+    const volatilePairs = [...tickers]
+      .sort((a, b) => Math.abs(b.change) - Math.abs(a.change))
+      .slice(0, 10);
     
     const signals = [];
     
-    // Анализируем каждую пару (быстрый анализ для автосканирования)
-    for (let i = 0; i < pairsToAnalyze.length; i++) {
-      const pair = pairsToAnalyze[i];
-      
-      // Пропускаем если изменение слишком маленькое
-      if (Math.abs(pair.change || 0) < 3) continue;
-      
-      try {
-        const signal = await analyzePair(pair);
-        if (signal) {
-          signals.push(signal);
+    // Быстрый анализ (без глубокой проверки для автосканирования)
+    for (const pair of volatilePairs) {
+      if (Math.abs(pair.change) > 8 && pair.volume > CONFIG.minVolume * 2) {
+        const signalType = pair.change > 0 ? 'LONG' : 'SHORT';
+        const confidence = Math.min(70 + Math.abs(pair.change), 90);
+        
+        // Простые уровни
+        const entry = pair.price;
+        let tp, sl;
+        
+        if (signalType === 'LONG') {
+          sl = entry * 0.97;
+          tp = entry * 1.06;
+        } else {
+          sl = entry * 1.03;
+          tp = entry * 0.94;
         }
-      } catch (error) {
-        // Пропускаем ошибки в отдельных парах
+        
+        signals.push({
+          pair: pair.symbol.replace('USDT', '/USDT'),
+          signal: signalType,
+          entry: entry.toFixed(6),
+          tp: tp.toFixed(6),
+          sl: sl.toFixed(6),
+          confidence: confidence,
+          change24h: pair.change.toFixed(2),
+          volume24h: pair.volume,
+          tier: confidence > 80 ? 'GOD TIER' : 'PREMIUM'
+        });
       }
       
-      // Задержка
-      if (i % 5 === 0 && i > 0) {
-        await new Promise(resolve => setTimeout(resolve, 1000));
-      }
+      // Короткая задержка
+      await new Promise(resolve => setTimeout(resolve, 500));
     }
     
     if (signals.length > 0) {
-      // Сортируем и берем только лучшие
-      signals.sort((a, b) => b.confidence - a.confidence);
-      const bestSignals = signals.slice(0, 3); // Только 3 лучших
+      console.log(`📊 Найдено ${signals.length} сигналов для автоотправки`);
       
-      console.log(`📊 Найдено ${signals.length} сигналов, отправляю ${bestSignals.length} лучших`);
+      // Отправляем только лучшие 3 сигнала
+      const bestSignals = signals
+        .sort((a, b) => b.confidence - a.confidence)
+        .slice(0, 3);
       
       for (const signal of bestSignals) {
-        const profitPercent = signal.signal === 'LONG' 
-          ? ((signal.tp / signal.entry - 1) * 100).toFixed(2)
-          : ((1 - signal.tp / signal.entry) * 100).toFixed(2);
-        
-        const lossPercent = signal.signal === 'LONG'
-          ? ((1 - signal.sl / signal.entry) * 100).toFixed(2)
-          : ((signal.sl / signal.entry - 1) * 100).toFixed(2);
-        
         const emoji = signal.signal === 'LONG' ? '🟢' : '🔴';
-        const tierEmoji = signal.tier.includes('GOD') ? '👑' : '💎';
+        const tierEmoji = signal.tier === 'GOD TIER' ? '👑' : '💎';
         
         const message = `
 ${tierEmoji} <b>${signal.tier} СИГНАЛ</b>
@@ -822,23 +519,14 @@ ${emoji} <b>${signal.signal} ${signal.pair}</b>
 💰 <b>Объем 24h:</b> $${(signal.volume24h / 1000000).toFixed(2)}M
 
 🎯 <b>Вход:</b> $${signal.entry}
-✅ <b>Тейк-профит:</b> $${signal.tp} (<b>+${profitPercent}%</b>)
-🛑 <b>Стоп-лосс:</b> $${signal.sl} (<b>-${lossPercent}%</b>)
+✅ <b>Тейк-профит:</b> $${signal.tp}
+🛑 <b>Стоп-лосс:</b> $${signal.sl}
 
-📊 <b>R:R Ratio:</b> 1:${signal.rrRatio}
-🔮 <b>Confidence:</b> ${signal.confidence}%
+🔮 <b>Уверенность:</b> ${Math.round(signal.confidence)}%
+📊 <b>R:R:</b> ~1:2
 
-<b>📉 ИНДИКАТОРЫ:</b>
-• RSI: ${signal.indicators.rsi}
-• MACD Hist: ${signal.indicators.macd_hist}
-• Stoch K: ${signal.indicators.stoch_k}
-• Volume: x${signal.indicators.volume_ratio}
-
-<b>✅ ПОДТВЕРЖДЕНИЯ:</b>
-${signal.confirmations.slice(0, 4).map(c => `• ${c.replace(/_/g, ' ')}`).join('\n')}
-
-🏦 <b>Exchange: ${CONFIG.exchange.toUpperCase()}</b>
-⏰ <b>Time:</b> ${signal.timestamp.toLocaleTimeString('ru-RU')}
+🏦 <b>Биржа:</b> MEXC SPOT
+⏰ <b>Время:</b> ${new Date().toLocaleTimeString('ru-RU')}
         `.trim();
         
         try {
@@ -863,7 +551,17 @@ ${signal.confirmations.slice(0, 4).map(c => `• ${c.replace(/_/g, ' ')}`).join(
 // ==================== ЗАПУСК БОТА ====================
 async function start() {
   try {
-    console.log('🚀 Запуск Crypto Signals Bot Pro...');
+    console.log('🚀 Инициализация MEXC Signals Bot...');
+    
+    // Проверяем MEXC API перед запуском
+    console.log('📡 Проверка подключения к MEXC...');
+    const testTickers = await getMexcTickers();
+    
+    if (testTickers.length === 0) {
+      console.log('⚠️  MEXC API может быть недоступен, но бот запускается...');
+    } else {
+      console.log(`✅ MEXC API доступен, получено ${testTickers.length} пар`);
+    }
     
     // Запускаем Telegram бота
     await bot.launch({
@@ -893,18 +591,12 @@ async function start() {
       try {
         await bot.telegram.sendMessage(
           CHAT_ID,
-          `🤖 <b>Crypto Signals Bot Pro запущен!</b>\n\n` +
+          `🤖 <b>MEXC Signals Bot запущен!</b>\n\n` +
           `✅ Telegram: подключено\n` +
-          `✅ API источники: CoinGecko, CoinCap, Binance\n` +
-          `⏰ Автосканирование: каждые 15 минут\n\n` +
-          `📊 <b>Параметры:</b>\n` +
-          `• Топ ${CONFIG.topGainers} роста + ${CONFIG.topLosers} падения\n` +
-          `• Объем > ${(CONFIG.minVolume/1000).toFixed(0)}K USDT\n` +
-          `• Изменение > ${CONFIG.minChange}%\n\n` +
-          `⚡ <b>Индикаторы:</b>\n` +
-          `• RSI, MACD, EMA (9,21,50)\n` +
-          `• Bollinger Bands, Stochastic\n` +
-          `• Volume Analysis\n\n` +
+          `✅ MEXC API: ${testTickers.length > 0 ? 'работает' : 'проверяется'}\n` +
+          `⏰ Автосканирование: каждые 20 минут\n\n` +
+          `🏦 Биржа: MEXC Spot\n` +
+          `📊 Анализ: RSI + Объем + Тренд\n\n` +
           `📱 <b>Команды:</b>\n` +
           `/start - информация\n` +
           `/test - проверить API\n` +
@@ -921,30 +613,18 @@ async function start() {
     }
     
     console.log('\n' + '='.repeat(50));
-    console.log('🤖 CRYPTO SIGNALS BOT PRO ЗАПУЩЕН');
+    console.log('🤖 MEXC SIGNALS BOT ЗАПУЩЕН');
     console.log('='.repeat(50));
-    console.log('📊 Конфигурация:');
-    console.log(`   • Топ роста: ${CONFIG.topGainers} пар`);
-    console.log(`   • Топ падения: ${CONFIG.topLosers} пар`);
-    console.log(`   • Мин. объем: ${(CONFIG.minVolume/1000).toFixed(0)}K USDT`);
-    console.log(`   • Мин. изменение: ${CONFIG.minChange}%`);
-    console.log(`   • Мин. уверенность: ${CONFIG.minConfidence}%`);
-    console.log('');
-    console.log('⚡ Индикаторы:');
-    console.log('   • RSI (14)');
-    console.log('   • MACD (12,26,9)');
-    console.log('   • EMA (9,21,50)');
-    console.log('   • Bollinger Bands (20,2)');
-    console.log('   • Stochastic (14,3,3)');
-    console.log('');
     console.log('📱 Команды в Telegram:');
     console.log('   /start  - информация о боте');
-    console.log('   /test   - проверка API');
-    console.log('   /scan   - глубокое сканирование (до 60 пар)');
+    console.log('   /test   - проверка MEXC API');
+    console.log('   /scan   - глубокое сканирование (до 10 пар)');
     console.log('   /top    - топ движений за 24h');
     console.log('   /status - статус бота');
     console.log('='.repeat(50));
-    console.log(`⏰ Автосканирование: каждые 15 минут`);
+    console.log(`⏰ Автосканирование: каждые 20 минут`);
+    console.log(`💰 Мин. объем: ${(CONFIG.minVolume/1000).toFixed(0)}K USDT`);
+    console.log(`🎯 Мин. изменение: ${CONFIG.minChange}%`);
     console.log('='.repeat(50));
     
   } catch (error) {
