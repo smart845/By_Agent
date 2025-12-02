@@ -54,8 +54,8 @@ async function getMexcFuturesTickers() {
     const futuresPairs = response.data
       .filter(ticker => ticker.symbol.includes('_USDT'))
       .map(ticker => {
-        const change = parseFloat(ticker.changeRate) * 100 || 0;
-        const volume = parseFloat(ticker.volume) || 0;
+        const change = parseFloat(ticker.riseFallRate) * 100 || 0;
+        const volume = parseFloat(ticker.amount24) || 0;
         const price = parseFloat(ticker.lastPrice);
         
         return {
