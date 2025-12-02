@@ -41,7 +41,7 @@ async function getMexcFuturesTickers() {
   try {
     console.log('📡 Запрос к MEXC Futures API...');
     
-    const response = await axios.get(`${CONFIG.apiUrl}/api/v1/contract/ticker_24hr`, {
+    const response = await axios.get(`${CONFIG.apiUrl}/api/v1/contract/ticker`, {
       timeout: 15000,
       headers: {
         'User-Agent': 'Mozilla/5.0'
@@ -54,8 +54,8 @@ async function getMexcFuturesTickers() {
     const futuresPairs = response.data
       .filter(ticker => ticker.symbol.includes('_USDT'))
       .map(ticker => {
-        const change = parseFloat(ticker.fundRate) || 0;
-        const volume = parseFloat(ticker.volume24) || 0;
+        const change = parseFloat(ticker.changeRate) * 100 || 0;
+        const volume = parseFloat(ticker.volume) || 0;
         const price = parseFloat(ticker.lastPrice);
         
         return {
@@ -66,7 +66,7 @@ async function getMexcFuturesTickers() {
           high: parseFloat(ticker.high24Price),
           low: parseFloat(ticker.low24Price),
           volumeValue: volume,
-          fundingRate: parseFloat(ticker.fundRate) || 0
+          fundingRate: parseFloat(ticker.fundingRate) || 0
         };
       })
       .filter(ticker => 
