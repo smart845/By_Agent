@@ -1,6 +1,7 @@
 import { Telegraf } from 'telegraf';
 import axios from 'axios';
 import cron from 'node-cron';
+import { HttpsProxyAgent } from 'https-proxy-agent';
 
 const BOT_TOKEN = process.env.TELEGRAM_BOT_TOKEN;
 const CHAT_ID = process.env.TELEGRAM_CHAT_ID;
@@ -16,21 +17,144 @@ if (!BOT_TOKEN) {
 
 // ==================== КОНФИГУРАЦИЯ ====================
 const CONFIG = {
-  baseUrl: 'https://api.bybit.com',
+  // Альтернативные API эндпоинты Bybit
+  apiEndpoints: [
+    'https://api.bybit.com',
+    'https://api.bytick.com',
+    'https://api-testnet.bybit.com' // testnet (работает для получения данных)
+  ],
+  currentEndpointIndex: 0,
+  
   category: 'spot',
-  timeframe: '15',  // 15 минут
+  timeframe: '15',
   topGainers: 30,
   topLosers: 30,
-  min24hVolume: 500000,  // 500K USDT (уменьшено для большего количества пар)
-  stopLossPercent: 1.0,   // 1% стоп-лосс
-  takeProfitPercent: 3.0, // 3% тейк-профит
-  minRRRatio: 3.0,        // 1:3 (уменьшено)
-  minConfidence: 60,      // 60% уверенности (уменьшено)
-  minConfirmations: 2     // 2 подтверждения (уменьшено)
+  min24hVolume: 500000,
+  stopLossPercent: 1.0,
+  takeProfitPercent: 3.0,
+  minRRRatio: 3.0,
+  minConfidence: 60,
+  minConfirmations: 2,
+  
+  // Настройки прокси
+  useProxy: true,
+  proxyList: [
+    'http://proxy-server.scrapeops.io:5353',
+    'http://51.159.115.233:3128',
+    'http://51.159.154.37:3128',
+    'http://51.159.152.97:3128'
+  ],
+  currentProxyIndex: 0,
+  
+  // Настройки запросов
+  retryAttempts: 3,
+  retryDelay: 2000
 };
 
-// ==================== ТЕХНИЧЕСКИЕ ИНДИКАТОРЫ ====================
+// ==================== УТИЛИТЫ ====================
+function getCurrentEndpoint() {
+  return CONFIG.apiEndpoints[CONFIG.currentEndpointIndex];
+}
 
+function rotateEndpoint() {
+  CONFIG.currentEndpointIndex = (CONFIG.currentEndpointIndex + 1) % CONFIG.apiEndpoints.length;
+  console.log(`🔄 Смена API endpoint на: ${getCurrentEndpoint()}`);
+  return getCurrentEndpoint();
+}
+
+function getCurrentProxy() {
+  if (!CONFIG.useProxy) return null;
+  return CONFIG.proxyList[CONFIG.currentProxyIndex];
+}
+
+function rotateProxy() {
+  CONFIG.currentProxyIndex = (CONFIG.currentProxyIndex + 1) % CONFIG.proxyList.length;
+  console.log(`🔄 Смена прокси на: ${getCurrentProxy()}`);
+  return getCurrentProxy();
+}
+
+async function makeBybitRequest(url, params = {}, options = {}) {
+  let lastError = null;
+  
+  for (let attempt = 1; attempt <= CONFIG.retryAttempts; attempt++) {
+    try {
+      const endpoint = getCurrentEndpoint();
+      const fullUrl = `${endpoint}${url}`;
+      
+      console.log(`📡 Попытка ${attempt}/${CONFIG.retryAttempts}: ${fullUrl}`);
+      
+      const config = {
+        params,
+        timeout: 15000,
+        headers: {
+          'Accept': 'application/json',
+          'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36',
+          'Accept-Language': 'en-US,en;q=0.9',
+          'Accept-Encoding': 'gzip, deflate, br',
+          'Connection': 'keep-alive',
+          'Sec-Fetch-Dest': 'empty',
+          'Sec-Fetch-Mode': 'cors',
+          'Sec-Fetch-Site': 'cross-site',
+          'Cache-Control': 'no-cache',
+          'Pragma': 'no-cache'
+        },
+        ...options
+      };
+      
+      // Добавляем прокси если включен
+      if (CONFIG.useProxy) {
+        const proxyUrl = getCurrentProxy();
+        if (proxyUrl) {
+          const agent = new HttpsProxyAgent(proxyUrl);
+          config.httpsAgent = agent;
+          config.httpAgent = agent;
+          console.log(`🌐 Используется прокси: ${proxyUrl}`);
+        }
+      }
+      
+      const response = await axios.get(fullUrl, config);
+      
+      if (response.data.retCode === 0) {
+        console.log(`✅ Успешный запрос к ${endpoint}`);
+        return response.data;
+      } else {
+        console.log(`⚠️ API вернул код ошибки: ${response.data.retCode} - ${response.data.retMsg}`);
+        lastError = new Error(`API Error ${response.data.retCode}: ${response.data.retMsg}`);
+      }
+      
+    } catch (error) {
+      lastError = error;
+      console.error(`❌ Ошибка запроса (попытка ${attempt}):`, error.message);
+      
+      if (error.response) {
+        console.error(`❌ Статус: ${error.response.status}`);
+        console.error(`❌ Данные:`, error.response.data);
+        
+        if (error.response.status === 403 || error.response.status === 429) {
+          // Ротация прокси и endpoint при блокировке
+          rotateProxy();
+          rotateEndpoint();
+          
+          if (attempt < CONFIG.retryAttempts) {
+            console.log(`⏳ Повтор через ${CONFIG.retryDelay/1000} сек...`);
+            await new Promise(resolve => setTimeout(resolve, CONFIG.retryDelay));
+            continue;
+          }
+        }
+      }
+    }
+    
+    // Если это не последняя попытка, ждем перед повторной
+    if (attempt < CONFIG.retryAttempts) {
+      console.log(`⏳ Повтор через ${CONFIG.retryDelay/1000} сек...`);
+      await new Promise(resolve => setTimeout(resolve, CONFIG.retryDelay));
+    }
+  }
+  
+  throw lastError || new Error('Не удалось выполнить запрос после всех попыток');
+}
+
+// ==================== ТЕХНИЧЕСКИЕ ИНДИКАТОРЫ ====================
 function calculateEMA(prices, period) {
   if (!prices || prices.length < period) return null;
   const multiplier = 2 / (period + 1);
@@ -63,7 +187,6 @@ function calculateMACD(prices) {
   if (!ema12 || !ema26) return { macd: 0, signal: 0, histogram: 0 };
   const macd = ema12 - ema26;
   
-  // Рассчитываем значения MACD за последние периоды
   const macdValues = [];
   for (let i = 26; i < prices.length; i++) {
     const slice = prices.slice(0, i + 1);
@@ -184,7 +307,7 @@ const bot = new Telegraf(BOT_TOKEN);
 // ==================== КОМАНДЫ БОТА ====================
 bot.start((ctx) => {
   console.log('📱 Получена команда /start от:', ctx.from.id);
-  const welcomeMessage = `🤖 <b>Bybit Scalper Bot v3.0</b>
+  const welcomeMessage = `🤖 <b>Bybit Scalper Bot v4.0</b>
 
 🎯 <b>Активные индикаторы:</b>
 • EMA (9, 21, 50) - Тренд
@@ -203,8 +326,13 @@ bot.start((ctx) => {
 • Минимум подтверждений: ${CONFIG.minConfirmations}
 • R:R соотношение: 1:${CONFIG.minRRRatio}
 
+🌐 <b>Особенности:</b>
+• Автоматическая смена прокси
+• Ротация API endpoints
+• Защита от блокировок
+
 ⏰ <b>Расписание:</b>
-Автоматическое сканирование каждые 15 минут
+Автоматическое сканирование каждые 30 минут
 
 🎖️ <b>Уровни сигналов:</b>
 👑 GOD TIER - Уверенность ≥80%
@@ -219,8 +347,9 @@ bot.command('status', (ctx) => {
   console.log('📱 Получена команда /status от:', ctx.from.id);
   ctx.reply(
     `✅ <b>Бот активен</b>\n\n` +
-    `📡 API: Bybit Public\n` +
-    `⏰ Сканирование: каждые 15 минут\n` +
+    `📡 API Endpoint: ${getCurrentEndpoint()}\n` +
+    `🌐 Прокси: ${CONFIG.useProxy ? 'Включен' : 'Выключен'}\n` +
+    `⏰ Сканирование: каждые 30 минут\n` +
     `🎯 Следующий запуск через: ${getNextScanTime()}`,
     { parse_mode: 'HTML' }
   );
@@ -231,49 +360,50 @@ bot.command('test', async (ctx) => {
   try {
     await ctx.reply('🧪 Тестирую подключение к Bybit API...');
     
-    const response = await axios.get(`${CONFIG.baseUrl}/v5/market/tickers`, {
-      params: { 
-        category: 'spot',
-        limit: 5 
-      },
-      timeout: 10000,
-      headers: {
-        'Accept': 'application/json',
-        'Accept-Encoding': 'gzip, deflate, br',
-        'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36'
-      }
+    const testData = await makeBybitRequest('/v5/market/tickers', {
+      category: 'spot',
+      limit: 3
     });
     
-    console.log('Bybit API Response:', response.data);
-    
-    if (response.data && response.data.retCode === 0) {
-      await ctx.reply(`✅ Bybit API доступен! Статус: ${response.data.retMsg}`);
-      await ctx.reply(`📊 Получено данных: ${response.data.result.list?.length || 0} пар`);
-      if (response.data.result.list && response.data.result.list.length > 0) {
-        const firstPair = response.data.result.list[0];
-        await ctx.reply(
-          `Пример пары:\n` +
-          `Символ: ${firstPair.symbol}\n` +
-          `Цена: ${firstPair.lastPrice}\n` +
-          `Изменение 24h: ${(firstPair.price24hPcnt * 100).toFixed(2)}%`
-        );
+    if (testData.retCode === 0) {
+      await ctx.reply(`✅ Bybit API доступен! Endpoint: ${getCurrentEndpoint()}`);
+      await ctx.reply(`📊 Получено пар: ${testData.result.list?.length || 0}`);
+      
+      if (testData.result.list && testData.result.list.length > 0) {
+        const sample = testData.result.list.slice(0, 3);
+        let message = `Примеры пар:\n`;
+        sample.forEach(pair => {
+          message += `\n${pair.symbol}: $${pair.lastPrice} (${(pair.price24hPcnt * 100).toFixed(2)}%)`;
+        });
+        await ctx.reply(message);
       }
     } else {
-      await ctx.reply(`⚠️ Bybit API вернул: ${JSON.stringify(response.data)}`);
+      await ctx.reply(`⚠️ Bybit API вернул: ${testData.retMsg}`);
     }
     
     await ctx.reply('✅ Тест подключения завершен!');
   } catch (error) {
     console.error('❌ Ошибка теста:', error.message);
-    console.error('❌ Полный error:', error);
+    await ctx.reply(`❌ Ошибка подключения: ${error.message}`);
+  }
+});
+
+bot.command('proxy', async (ctx) => {
+  console.log('📱 Получена команда /proxy от:', ctx.from.id);
+  try {
+    const currentProxy = getCurrentProxy();
+    const currentEndpoint = getCurrentEndpoint();
     
-    let errorMessage = `❌ Ошибка подключения: ${error.message}`;
-    if (error.response) {
-      errorMessage += `\nСтатус: ${error.response.status}`;
-      errorMessage += `\nДанные: ${JSON.stringify(error.response.data)}`;
-    }
-    
-    await ctx.reply(errorMessage);
+    await ctx.reply(
+      `🌐 <b>Текущие настройки сети:</b>\n\n` +
+      `Endpoint: ${currentEndpoint}\n` +
+      `Прокси: ${currentProxy || 'Не используется'}\n` +
+      `Статус прокси: ${CONFIG.useProxy ? '✅ Включен' : '❌ Выключен'}\n\n` +
+      `Альтернативные endpoints:\n${CONFIG.apiEndpoints.map(e => `• ${e}`).join('\n')}`,
+      { parse_mode: 'HTML' }
+    );
+  } catch (error) {
+    await ctx.reply(`❌ Ошибка: ${error.message}`);
   }
 });
 
@@ -282,7 +412,6 @@ bot.command('scan', async (ctx) => {
   try {
     await ctx.reply('🔍 Запускаю ручное сканирование...');
     await runSignalsTask(true);
-    await ctx.reply('✅ Ручное сканирование завершено!');
   } catch (error) {
     console.error('❌ Ошибка ручного сканирования:', error);
     await ctx.reply(`❌ Ошибка: ${error.message}`);
@@ -292,7 +421,7 @@ bot.command('scan', async (ctx) => {
 function getNextScanTime() {
   const now = new Date();
   const minutes = now.getMinutes();
-  const nextScan = 15 - (minutes % 15);
+  const nextScan = 30 - (minutes % 30);
   return `${nextScan} мин`;
 }
 
@@ -300,38 +429,20 @@ function getNextScanTime() {
 async function getTopMovers() {
   try {
     console.log('📡 Запрос данных с Bybit...');
-    const response = await axios.get(`${CONFIG.baseUrl}/v5/market/tickers`, {
-      params: { 
-        category: CONFIG.category 
-      },
-      timeout: 20000,
-      headers: {
-        'Accept': 'application/json',
-        'Accept-Encoding': 'gzip, deflate, br',
-        'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36'
-      }
+    
+    const response = await makeBybitRequest('/v5/market/tickers', {
+      category: CONFIG.category
     });
     
-    console.log('🔍 Ответ от Bybit:', {
-      retCode: response.data.retCode,
-      retMsg: response.data.retMsg,
-      listLength: response.data.result?.list?.length || 0
-    });
-    
-    if (response.data.retCode !== 0) {
-      console.error('❌ Bybit API ошибка:', response.data.retMsg);
-      return [];
-    }
-    
-    if (!response.data.result || !response.data.result.list) {
+    if (!response.result || !response.result.list) {
       console.error('❌ Нет данных в ответе');
       return [];
     }
     
-    console.log(`✅ Получено ${response.data.result.list.length} пар с Bybit`);
+    console.log(`✅ Получено ${response.result.list.length} пар`);
     
     // Фильтруем пары
-    const usdtPairs = response.data.result.list.filter(pair => {
+    const usdtPairs = response.result.list.filter(pair => {
       if (!pair.symbol.endsWith('USDT')) return false;
       if (pair.symbol.includes('UP') || pair.symbol.includes('DOWN')) return false;
       if (pair.symbol.includes('BEAR') || pair.symbol.includes('BULL')) return false;
@@ -342,7 +453,7 @@ async function getTopMovers() {
       
       return volume >= CONFIG.min24hVolume && 
              price > 0.000001 && 
-             Math.abs(change) > 0.001; // > 0.1% изменение
+             Math.abs(change) > 0.001;
     });
     
     console.log(`✅ Отфильтровано ${usdtPairs.length} USDT пар с объемом >${(CONFIG.min24hVolume/1000000).toFixed(2)}M`);
@@ -360,18 +471,12 @@ async function getTopMovers() {
     const topGainers = sorted.slice(0, CONFIG.topGainers);
     const topLosers = sorted.slice(-CONFIG.topLosers).reverse();
     
-    console.log(`✅ Топ роста: ${topGainers.length} пар ${topGainers.length > 0 ? `(${topGainers[0]?.symbol}: +${topGainers[0]?.change?.toFixed(2)}%)` : ''}`);
-    console.log(`✅ Топ падения: ${topLosers.length} пар ${topLosers.length > 0 ? `(${topLosers[0]?.symbol}: ${topLosers[0]?.change?.toFixed(2)}%)` : ''}`);
+    console.log(`✅ Топ роста: ${topGainers.length} пар`);
+    console.log(`✅ Топ падения: ${topLosers.length} пар`);
     
     return [...topGainers, ...topLosers];
   } catch (error) {
     console.error('❌ Ошибка получения данных:', error.message);
-    if (error.response) {
-      console.error('❌ Статус:', error.response.status);
-      console.error('❌ Данные:', error.response.data);
-    } else if (error.request) {
-      console.error('❌ Нет ответа от сервера');
-    }
     return [];
   }
 }
@@ -381,49 +486,30 @@ async function analyzeSignal(pair) {
   try {
     console.log(`🔍 Анализ пары: ${pair.symbol} (${pair.change > 0 ? '+' : ''}${pair.change.toFixed(2)}%)`);
     
-    // Добавляем небольшую задержку между запросами
-    await new Promise(resolve => setTimeout(resolve, 500));
+    // Добавляем задержку
+    await new Promise(resolve => setTimeout(resolve, 800));
     
-    const candleResponse = await axios.get(
-      `${CONFIG.baseUrl}/v5/market/kline`,
-      { 
-        params: {
-          category: CONFIG.category,
-          symbol: pair.symbol,
-          interval: CONFIG.timeframe,
-          limit: 100
-        },
-        timeout: 15000,
-        headers: {
-          'Accept': 'application/json',
-          'User-Agent': 'Mozilla/5.0'
-        }
-      }
-    );
+    const candleResponse = await makeBybitRequest('/v5/market/kline', {
+      category: CONFIG.category,
+      symbol: pair.symbol,
+      interval: CONFIG.timeframe,
+      limit: 100
+    });
     
-    if (candleResponse.data.retCode !== 0 || !candleResponse.data.result?.list) {
-      console.log(`⚠️ Нет данных для ${pair.symbol}: ${candleResponse.data.retMsg}`);
+    if (!candleResponse.result?.list || candleResponse.result.list.length < 50) {
+      console.log(`⚠️ Недостаточно данных для ${pair.symbol}`);
       return null;
     }
     
-    const candles = candleResponse.data.result.list;
-    if (candles.length < 50) {
-      console.log(`⚠️ Недостаточно данных для ${pair.symbol}: ${candles.length} свечей`);
-      return null;
-    }
-    
-    // Переворачиваем массив (Bybit возвращает новые данные первыми)
+    const candles = candleResponse.result.list;
     const reversedCandles = [...candles].reverse();
     
-    // Извлекаем данные: [время, открытие, высшая, низшая, закрытие, объем, оборот]
     const closes = reversedCandles.map(c => parseFloat(c[4]));
     const highs = reversedCandles.map(c => parseFloat(c[2]));
     const lows = reversedCandles.map(c => parseFloat(c[3]));
     const volumes = reversedCandles.map(c => parseFloat(c[5]));
     
-    if (closes.length < 50) {
-      return null;
-    }
+    if (closes.length < 50) return null;
     
     const currentPrice = closes[closes.length - 1];
     
@@ -443,7 +529,7 @@ async function analyzeSignal(pair) {
     const confirmations = [];
     let qualityScore = 0;
     
-    // RSI анализ
+    // Анализ индикаторов
     if (rsi < 35) {
       confirmations.push('RSI_OVERSOLD');
       qualityScore += 2;
@@ -452,24 +538,15 @@ async function analyzeSignal(pair) {
       qualityScore += 2;
     }
     
-    // MACD анализ
     if (macd.histogram > 0) {
       confirmations.push('MACD_POSITIVE');
       qualityScore += 1;
-    } else if (macd.histogram < 0) {
-      confirmations.push('MACD_NEGATIVE');
-      qualityScore += 1;
     }
-    
     if (macd.macd > macd.signal) {
       confirmations.push('MACD_CROSS_BULLISH');
       qualityScore += 1;
-    } else if (macd.macd < macd.signal) {
-      confirmations.push('MACD_CROSS_BEARISH');
-      qualityScore += 1;
     }
     
-    // Bollinger Bands
     if (bb) {
       const bbPosition = (currentPrice - bb.lower) / (bb.upper - bb.lower) * 100;
       if (bbPosition < 25) {
@@ -481,7 +558,6 @@ async function analyzeSignal(pair) {
       }
     }
     
-    // Stochastic
     if (stoch.k < 25) {
       confirmations.push('STOCH_OVERSOLD');
       qualityScore += 2;
@@ -490,7 +566,6 @@ async function analyzeSignal(pair) {
       qualityScore += 2;
     }
     
-    // EMA тренд
     if (ema9 && ema21 && ema50) {
       if (currentPrice > ema9 && ema9 > ema21 && ema21 > ema50) {
         confirmations.push('STRONG_UPTREND');
@@ -498,25 +573,14 @@ async function analyzeSignal(pair) {
       } else if (currentPrice < ema9 && ema9 < ema21 && ema21 < ema50) {
         confirmations.push('STRONG_DOWNTREND');
         qualityScore += 3;
-      } else if (ema9 > ema21 && ema21 > ema50) {
-        confirmations.push('EMA_BULLISH');
-        qualityScore += 2;
-      } else if (ema9 < ema21 && ema21 < ema50) {
-        confirmations.push('EMA_BEARISH');
-        qualityScore += 2;
       }
     }
     
-    // Объем
     if (volumeStrength > 1.3) {
       confirmations.push('HIGH_VOLUME');
       qualityScore += 2;
-    } else if (volumeStrength < 0.7) {
-      confirmations.push('LOW_VOLUME');
-      qualityScore -= 1;
     }
     
-    // Сила тренда
     if (adx > 25) {
       confirmations.push('STRONG_TREND');
       qualityScore += 2;
@@ -524,18 +588,16 @@ async function analyzeSignal(pair) {
     
     // Проверяем минимальное количество подтверждений
     if (confirmations.length < CONFIG.minConfirmations) {
-      console.log(`⚠️ ${pair.symbol}: мало подтверждений (${confirmations.length} < ${CONFIG.minConfirmations})`);
       return null;
     }
     
-    // Определяем направление сигнала
+    // Определяем направление
     let signal = null;
     let confidence = 0;
     
-    // Более гибкая логика определения сигнала
     const bullishScore = 
       (pair.change > 0 ? 2 : 0) +
-      (rsi < 50 ? 1 : 0) +
+      (rsi < 45 ? 1 : 0) +
       (macd.histogram > 0 ? 2 : 0) +
       (stoch.k < 50 ? 1 : 0) +
       (ema9 && ema21 && currentPrice > ema9 && ema9 > ema21 ? 3 : 0) +
@@ -543,7 +605,7 @@ async function analyzeSignal(pair) {
     
     const bearishScore = 
       (pair.change < 0 ? 2 : 0) +
-      (rsi > 50 ? 1 : 0) +
+      (rsi > 55 ? 1 : 0) +
       (macd.histogram < 0 ? 2 : 0) +
       (stoch.k > 50 ? 1 : 0) +
       (ema9 && ema21 && currentPrice < ema9 && ema9 < ema21 ? 3 : 0) +
@@ -574,16 +636,14 @@ async function analyzeSignal(pair) {
     }
     
     if (!signal || confidence < CONFIG.minConfidence) {
-      console.log(`⚠️ ${pair.symbol}: сигнал не определен (доверие: ${confidence.toFixed(0)}%)`);
       return null;
     }
     
-    // Рассчитываем уровни входа, стоп-лосса и тейк-профита
+    // Рассчитываем уровни
     const entry = currentPrice;
     let sl, tp, rrRatio;
     
     if (signal === 'LONG') {
-      // Для лонга: стоп-лосс ниже, тейк-профит выше
       const atrBasedSL = entry - (atr * 1.5);
       const fixedSL = entry * (1 - CONFIG.stopLossPercent / 100);
       sl = Math.max(atrBasedSL, fixedSL);
@@ -591,7 +651,6 @@ async function analyzeSignal(pair) {
       tp = entry + (risk * CONFIG.minRRRatio);
       rrRatio = (tp - entry) / (entry - sl);
     } else {
-      // Для шорта: стоп-лосс выше, тейк-профит ниже
       const atrBasedSL = entry + (atr * 1.5);
       const fixedSL = entry * (1 + CONFIG.stopLossPercent / 100);
       sl = Math.min(atrBasedSL, fixedSL);
@@ -600,25 +659,15 @@ async function analyzeSignal(pair) {
       rrRatio = (entry - tp) / (sl - entry);
     }
     
-    // Проверяем соотношение риск/прибыль
     if (rrRatio < CONFIG.minRRRatio) {
-      console.log(`⚠️ ${pair.symbol}: плохое R:R (${rrRatio.toFixed(1)} < ${CONFIG.minRRRatio})`);
       return null;
     }
     
-    // Определяем уровень сигнала
     const tier = confidence >= 80 ? 'GOD TIER' : 
                  confidence >= 70 ? 'PREMIUM' : 
-                 confidence >= 60 ? 'STANDARD' : null;
+                 'STANDARD';
     
-    if (!tier || tier === 'STANDARD') {
-      // Для стандартных сигналов можно использовать более строгие критерии
-      if (confidence < 65 || rrRatio < 3.5) {
-        return null;
-      }
-    }
-    
-    console.log(`✅ СИГНАЛ: ${signal} ${pair.symbol} (${confidence.toFixed(0)}%, R:R 1:${rrRatio.toFixed(1)}, ${tier})`);
+    console.log(`✅ СИГНАЛ: ${signal} ${pair.symbol} (${confidence.toFixed(0)}%, R:R 1:${rrRatio.toFixed(1)})`);
     
     return {
       pair: pair.symbol.replace('USDT', '/USDT'),
@@ -662,6 +711,8 @@ async function generateSignals() {
     console.log('\n🎯 НАЧАЛО СКАНИРОВАНИЯ');
     console.log('='.repeat(60));
     console.log(`⏰ Время: ${new Date().toLocaleString('ru-RU')}`);
+    console.log(`🌐 Endpoint: ${getCurrentEndpoint()}`);
+    console.log(`🔧 Прокси: ${CONFIG.useProxy ? 'Включен' : 'Выключен'}`);
     console.log('='.repeat(60));
     
     const topMovers = await getTopMovers();
@@ -673,40 +724,37 @@ async function generateSignals() {
     console.log(`📊 Анализ ${topMovers.length} пар...`);
     
     const signals = [];
-    let analyzedCount = 0;
     
-    for (const pair of topMovers) {
-      analyzedCount++;
+    for (let i = 0; i < topMovers.length; i++) {
+      const pair = topMovers[i];
       const signal = await analyzeSignal(pair);
       if (signal) {
         signals.push(signal);
       }
       
-      // Добавляем задержку чтобы не превысить лимиты API
-      if (analyzedCount % 5 === 0) {
-        console.log(`⏳ Проанализировано ${analyzedCount}/${topMovers.length} пар`);
+      // Задержка и ротация прокси каждые 5 запросов
+      if (i > 0 && i % 5 === 0) {
+        console.log(`⏳ Проанализировано ${i + 1}/${topMovers.length} пар`);
+        rotateProxy(); // Меняем прокси
+        await new Promise(resolve => setTimeout(resolve, 2000));
+      } else {
         await new Promise(resolve => setTimeout(resolve, 1000));
       }
     }
     
-    // Сортируем сигналы по уверенности
+    // Сортируем сигналы
     signals.sort((a, b) => b.confidence - a.confidence);
     
     console.log('='.repeat(60));
     console.log(`📊 РЕЗУЛЬТАТЫ: Найдено ${signals.length} сигналов`);
-    if (signals.length > 0) {
-      signals.forEach((s, i) => {
-        console.log(`   ${i + 1}. ${s.tier} ${s.signal} ${s.pair}: ${s.confidence}% (R:R 1:${s.rrRatio})`);
-      });
-    } else {
-      console.log('   ℹ️ Сигналов не найдено');
-    }
+    signals.forEach((s, i) => {
+      console.log(`   ${i + 1}. ${s.tier} ${s.signal} ${s.pair}: ${s.confidence}% (R:R 1:${s.rrRatio})`);
+    });
     console.log('='.repeat(60));
     
-    return signals.slice(0, 10); // Максимум 10 сигналов за раз
+    return signals.slice(0, 10);
   } catch (error) {
     console.error('❌ Ошибка генерации сигналов:', error);
-    console.error('Stack:', error.stack);
     return [];
   }
 }
@@ -783,61 +831,31 @@ async function runSignalsTask(isManual = false) {
     const signals = await generateSignals();
     
     if (signals.length === 0) {
-      console.log('ℹ️  Сигналов не найдено в текущем сканировании');
+      console.log('ℹ️  Сигналов не найдено');
       
       if (CHAT_ID && isManual) {
         await bot.telegram.sendMessage(
           CHAT_ID,
           `ℹ️ <b>Сканирование завершено</b>\n\n` +
-          `Проанализировано: ${CONFIG.topGainers + CONFIG.topLosers} пар\n` +
           `Сигналов не найдено\n\n` +
-          `⏰ ${new Date().toLocaleTimeString('ru-RU')}\n` +
-          `🏦 Bybit Spot`,
+          `⏰ ${new Date().toLocaleTimeString('ru-RU')}`,
           { parse_mode: 'HTML' }
         );
       }
       return;
     }
     
-    console.log(`📤 Отправка ${signals.length} сигналов в Telegram...`);
+    console.log(`📤 Отправка ${signals.length} сигналов...`);
     
-    let sentCount = 0;
     for (const signal of signals) {
-      const sent = await sendSignalToTelegram(signal);
-      if (sent) sentCount++;
-      
-      // Задержка между отправками чтобы не превысить лимиты Telegram
-      await new Promise(resolve => setTimeout(resolve, 1500));
+      await sendSignalToTelegram(signal);
+      await new Promise(resolve => setTimeout(resolve, 2000));
     }
     
-    if (CHAT_ID && isManual) {
-      await bot.telegram.sendMessage(
-        CHAT_ID,
-        `✅ <b>Сканирование завершено</b>\n\n` +
-        `Найдено сигналов: ${signals.length}\n` +
-        `Отправлено: ${sentCount}\n\n` +
-        `⏰ ${new Date().toLocaleTimeString('ru-RU')}\n` +
-        `🏦 Bybit Spot`,
-        { parse_mode: 'HTML' }
-      );
-    }
+    console.log(`✅ Сканирование завершено. Сигналов: ${signals.length}`);
     
-    console.log(`✅ Сканирование успешно завершено. Отправлено сигналов: ${sentCount}\n`);
   } catch (error) {
-    console.error('❌ Критическая ошибка:', error);
-    console.error('Stack:', error.stack);
-    
-    if (CHAT_ID && isManual) {
-      try {
-        await bot.telegram.sendMessage(
-          CHAT_ID,
-          `❌ <b>Ошибка сканирования</b>\n\n${error.message}`,
-          { parse_mode: 'HTML' }
-        );
-      } catch (e) {
-        console.error('Не удалось отправить сообщение об ошибке');
-      }
-    }
+    console.error('❌ Ошибка сканирования:', error);
   }
 }
 
@@ -846,122 +864,87 @@ async function start() {
   try {
     console.log('\n🔄 Инициализация Telegram бота...');
     
-    // Устанавливаем обработчики ошибок
-    bot.catch((err, ctx) => {
-      console.error(`❌ Ошибка Telegram бота:`, err);
-      console.error(`Контекст:`, ctx?.updateType);
-    });
-    
-    await bot.telegram.deleteWebhook({ drop_pending_updates: true });
     await bot.launch({ 
       dropPendingUpdates: true,
-      allowedUpdates: ['message', 'callback_query']
+      allowedUpdates: ['message']
     });
     
     console.log('✅ Telegram бот запущен');
     
     console.log('\n' + '█'.repeat(60));
-    console.log('🤖 BYBIT SCALPER BOT v3.0 - ЗАПУЩЕН');
+    console.log('🤖 BYBIT SCALPER BOT v4.0 - ЗАПУЩЕН');
     console.log('█'.repeat(60));
     console.log('');
-    console.log('⚡ АКТИВНЫЕ ИНДИКАТОРЫ:');
-    console.log('   • EMA (9, 21, 50)');
-    console.log('   • RSI (14)');
-    console.log('   • MACD (12, 26, 9)');
-    console.log('   • Bollinger Bands (20, 2)');
-    console.log('   • Stochastic (14, 3, 3)');
-    console.log('   • ATR (14)');
-    console.log('   • ADX (14)');
-    console.log('   • Volume Analysis');
+    console.log('🌐 СЕТЕВЫЕ НАСТРОЙКИ:');
+    console.log(`   • Прокси: ${CONFIG.useProxy ? 'Включен' : 'Выключен'}`);
+    console.log(`   • Endpoints: ${CONFIG.apiEndpoints.length} доступно`);
+    console.log(`   • Текущий endpoint: ${getCurrentEndpoint()}`);
     console.log('');
-    console.log('📊 ПАРАМЕТРЫ СКАНИРОВАНИЯ:');
-    console.log(`   • Топ ${CONFIG.topGainers} растущих`);
-    console.log(`   • Топ ${CONFIG.topLosers} падающих`);
-    console.log(`   • Минимальный объем: ${(CONFIG.min24hVolume / 1000000).toFixed(2)}M USDT`);
-    console.log(`   • Стоп-лосс: ${CONFIG.stopLossPercent}%`);
-    console.log(`   • Тейк-профит: ${CONFIG.takeProfitPercent}%`);
+    console.log('📊 ПАРАМЕТРЫ:');
+    console.log(`   • Объем > ${(CONFIG.min24hVolume/1000000).toFixed(2)}M USDT`);
     console.log(`   • Min R:R: 1:${CONFIG.minRRRatio}`);
     console.log(`   • Min Confidence: ${CONFIG.minConfidence}%`);
-    console.log(`   • Min Confirmations: ${CONFIG.minConfirmations}`);
     console.log('');
-    console.log('🏦 БИРЖА: BYBIT SPOT');
-    console.log('⏰ РАСПИСАНИЕ: Каждые 15 минут');
-    console.log('📱 КОМАНДЫ: /start, /status, /test, /scan');
+    console.log('⏰ РАСПИСАНИЕ: Каждые 30 минут');
+    console.log('📱 КОМАНДЫ: /start, /status, /test, /scan, /proxy');
     console.log('█'.repeat(60));
     console.log('');
     
     if (CHAT_ID) {
-      console.log('📤 Отправка стартового сообщения...');
       try {
         await bot.telegram.sendMessage(
           CHAT_ID,
-          `🚀 <b>Bybit Scalper Bot v3.0 запущен!</b>\n\n` +
-          `✅ Подключение к Telegram: OK\n` +
-          `✅ Конфигурация загружена\n\n` +
-          `📊 <b>Параметры:</b>\n` +
-          `• Объем > ${(CONFIG.min24hVolume / 1000000).toFixed(2)}M USDT\n` +
-          `• R:R > 1:${CONFIG.minRRRatio}\n` +
-          `• Confidence > ${CONFIG.minConfidence}%\n\n` +
+          `🚀 <b>Bybit Scalper Bot v4.0 запущен!</b>\n\n` +
+          `🌐 <b>Сетевые настройки:</b>\n` +
+          `• Endpoint: ${getCurrentEndpoint()}\n` +
+          `• Прокси: ${CONFIG.useProxy ? '✅ Включен' : '❌ Выключен'}\n\n` +
+          `📊 <b>Параметры сканирования:</b>\n` +
+          `• Объем > ${(CONFIG.min24hVolume/1000000).toFixed(2)}M USDT\n` +
+          `• R:R > 1:${CONFIG.minRRRatio}\n\n` +
           `⏰ <b>Расписание:</b>\n` +
-          `• Автосканирование: каждые 15 мин\n` +
-          `• Первое сканирование: через 1 минуту\n\n` +
+          `• Автосканирование: каждые 30 мин\n` +
+          `• Первое сканирование: через 2 минуты\n\n` +
           `🏦 Биржа: Bybit Spot\n` +
-          `Используйте /test для проверки API\n` +
-          `Используйте /scan для ручного сканирования`,
+          `📱 Команды: /test /scan /status /proxy`,
           { parse_mode: 'HTML' }
         );
         console.log('✅ Стартовое сообщение отправлено');
       } catch (error) {
-        console.error('❌ Ошибка отправки стартового сообщения:', error.message);
+        console.error('❌ Ошибка отправки сообщения:', error.message);
       }
     }
     
     // Настраиваем планировщик
-    cron.schedule('*/15 * * * *', () => {
+    cron.schedule('*/30 * * * *', () => {
       console.log(`\n⏰ Запуск по расписанию: ${new Date().toLocaleString('ru-RU')}`);
-      runSignalsTask(false).catch(err => {
-        console.error('❌ Ошибка в планировщике:', err);
-      });
+      runSignalsTask(false);
     });
     
-    console.log('⏳ Первое сканирование через 1 минуту...\n');
+    console.log('⏳ Первое сканирование через 2 минуты...\n');
     
-    // Первое сканирование через 1 минуту
+    // Первое сканирование
     setTimeout(() => {
       console.log(`\n🎯 Запуск первого сканирования: ${new Date().toLocaleString('ru-RU')}`);
-      runSignalsTask(false).catch(err => {
-        console.error('❌ Ошибка первого сканирования:', err);
-      });
-    }, 60000);
+      runSignalsTask(false);
+    }, 120000);
     
   } catch (error) {
-    console.error('❌ КРИТИЧЕСКАЯ ОШИБКА ЗАПУСКА:', error.message);
-    console.error('Stack:', error.stack);
+    console.error('❌ Ошибка запуска:', error.message);
     process.exit(1);
   }
 }
 
-// Обработчики завершения работы
+// Обработчики завершения
 process.once('SIGINT', () => {
-  console.log('\n⚠️  Получен сигнал SIGINT, останавливаю бота...');
+  console.log('\n⚠️  Остановка бота...');
   bot.stop('SIGINT');
   process.exit(0);
 });
 
 process.once('SIGTERM', () => {
-  console.log('\n⚠️  Получен сигнал SIGTERM, останавливаю бота...');
+  console.log('\n⚠️  Остановка бота...');
   bot.stop('SIGTERM');
   process.exit(0);
 });
 
-// Обработчик необработанных ошибок
-process.on('unhandledRejection', (reason, promise) => {
-  console.error('❌ Необработанная ошибка:', reason);
-});
-
-process.on('uncaughtException', (error) => {
-  console.error('❌ Непойманная ошибка:', error);
-});
-
-// Запуск бота
 start();
