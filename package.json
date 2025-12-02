@@ -1,5 +1,5 @@
 {
-  "name": "crypto-signals-bot",
+  "name": "mexc-signals-bot",
   "version": "1.0.0",
   "main": "bot.js",
   "scripts": {
