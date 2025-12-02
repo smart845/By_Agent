@@ -1,0 +1,27 @@
+{
+  "name": "binance-scalper-v2",
+  "version": "2.0.0",
+  "description": "Автоматический бот для поиска торговых сигналов на Binance",
+  "type": "module",
+  "main": "bot.js",
+  "scripts": {
+    "start": "node bot.js"
+  },
+  "engines": {
+    "node": ">=18.0.0"
+  },
+  "dependencies": {
+    "telegraf": "^4.12.2",
+    "axios": "^1.6.2",
+    "node-cron": "^3.0.2"
+  },
+  "keywords": [
+    "binance",
+    "trading",
+    "bot",
+    "scalper",
+    "telegram"
+  ],
+  "author": "",
+  "license": "MIT"
+}
