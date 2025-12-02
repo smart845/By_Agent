@@ -17,34 +17,28 @@ if (!BOT_TOKEN) {
 
 // ==================== КОНФИГУРАЦИЯ ====================
 const CONFIG = {
-  // Альтернативные API эндпоинты Bybit
+  // Ваш прокси с авторизацией
+  PROXY_URL: 'http://14db7c2b55cdd:4693eb6dd0@141.226.244.38:12323',
+  
+  // Альтернативные API эндпоинты
   apiEndpoints: [
     'https://api.bybit.com',
     'https://api.bytick.com',
-    'https://api-testnet.bybit.com' // testnet (работает для получения данных)
+    'https://api-testnet.bybit.com'
   ],
   currentEndpointIndex: 0,
   
+  // Настройки сканирования
   category: 'spot',
   timeframe: '15',
-  topGainers: 30,
-  topLosers: 30,
-  min24hVolume: 500000,
-  stopLossPercent: 1.0,
+  topGainers: 25,
+  topLosers: 25,
+  min24hVolume: 100000,      // 100K USDT
+  stopLossPercent: 1.5,
   takeProfitPercent: 3.0,
-  minRRRatio: 3.0,
-  minConfidence: 60,
+  minRRRatio: 2.5,
+  minConfidence: 55,
   minConfirmations: 2,
-  
-  // Настройки прокси
-  useProxy: true,
-  proxyList: [
-    'http://proxy-server.scrapeops.io:5353',
-    'http://51.159.115.233:3128',
-    'http://51.159.154.37:3128',
-    'http://51.159.152.97:3128'
-  ],
-  currentProxyIndex: 0,
   
   // Настройки запросов
   retryAttempts: 3,
@@ -62,18 +56,10 @@ function rotateEndpoint() {
   return getCurrentEndpoint();
 }
 
-function getCurrentProxy() {
-  if (!CONFIG.useProxy) return null;
-  return CONFIG.proxyList[CONFIG.currentProxyIndex];
-}
+// Создаем прокси агент с вашими данными
+const proxyAgent = new HttpsProxyAgent(CONFIG.PROXY_URL);
 
-function rotateProxy() {
-  CONFIG.currentProxyIndex = (CONFIG.currentProxyIndex + 1) % CONFIG.proxyList.length;
-  console.log(`🔄 Смена прокси на: ${getCurrentProxy()}`);
-  return getCurrentProxy();
-}
-
-async function makeBybitRequest(url, params = {}, options = {}) {
+async function makeBybitRequest(url, params = {}) {
   let lastError = null;
   
   for (let attempt = 1; attempt <= CONFIG.retryAttempts; attempt++) {
@@ -82,44 +68,39 @@ async function makeBybitRequest(url, params = {}, options = {}) {
       const fullUrl = `${endpoint}${url}`;
       
       console.log(`📡 Попытка ${attempt}/${CONFIG.retryAttempts}: ${fullUrl}`);
+      console.log(`🌐 Используется прокси: 141.226.244.38:12323`);
       
       const config = {
         params,
-        timeout: 15000,
+        timeout: 20000,
+        httpsAgent: proxyAgent,
+        httpAgent: proxyAgent,
         headers: {
           'Accept': 'application/json',
-          'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36',
+          'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36',
           'Accept-Language': 'en-US,en;q=0.9',
           'Accept-Encoding': 'gzip, deflate, br',
           'Connection': 'keep-alive',
-          'Sec-Fetch-Dest': 'empty',
-          'Sec-Fetch-Mode': 'cors',
-          'Sec-Fetch-Site': 'cross-site',
           'Cache-Control': 'no-cache',
           'Pragma': 'no-cache'
-        },
-        ...options
-      };
-      
-      // Добавляем прокси если включен
-      if (CONFIG.useProxy) {
-        const proxyUrl = getCurrentProxy();
-        if (proxyUrl) {
-          const agent = new HttpsProxyAgent(proxyUrl);
-          config.httpsAgent = agent;
-          config.httpAgent = agent;
-          console.log(`🌐 Используется прокси: ${proxyUrl}`);
         }
-      }
+      };
       
       const response = await axios.get(fullUrl, config);
       
-      if (response.data.retCode === 0) {
+      console.log('📊 Ответ API:', {
+        retCode: response.data?.retCode,
+        retMsg: response.data?.retMsg,
+        listCount: response.data?.result?.list?.length || 0
+      });
+      
+      if (response.data?.retCode === 0) {
         console.log(`✅ Успешный запрос к ${endpoint}`);
         return response.data;
       } else {
-        console.log(`⚠️ API вернул код ошибки: ${response.data.retCode} - ${response.data.retMsg}`);
-        lastError = new Error(`API Error ${response.data.retCode}: ${response.data.retMsg}`);
+        const errorMsg = response.data?.retMsg || 'Unknown API error';
+        console.log(`⚠️ API вернул ошибку: ${errorMsg}`);
+        lastError = new Error(`API Error: ${errorMsg}`);
       }
       
     } catch (error) {
@@ -128,30 +109,23 @@ async function makeBybitRequest(url, params = {}, options = {}) {
       
       if (error.response) {
         console.error(`❌ Статус: ${error.response.status}`);
-        console.error(`❌ Данные:`, error.response.data);
-        
         if (error.response.status === 403 || error.response.status === 429) {
-          // Ротация прокси и endpoint при блокировке
-          rotateProxy();
+          // При блокировке меняем endpoint
           rotateEndpoint();
-          
-          if (attempt < CONFIG.retryAttempts) {
-            console.log(`⏳ Повтор через ${CONFIG.retryDelay/1000} сек...`);
-            await new Promise(resolve => setTimeout(resolve, CONFIG.retryDelay));
-            continue;
-          }
         }
+      } else if (error.code === 'ECONNREFUSED') {
+        console.error('❌ Прокси недоступен');
       }
-    }
-    
-    // Если это не последняя попытка, ждем перед повторной
-    if (attempt < CONFIG.retryAttempts) {
-      console.log(`⏳ Повтор через ${CONFIG.retryDelay/1000} сек...`);
-      await new Promise(resolve => setTimeout(resolve, CONFIG.retryDelay));
+      
+      // Если это не последняя попытка, ждем
+      if (attempt < CONFIG.retryAttempts) {
+        console.log(`⏳ Повтор через ${CONFIG.retryDelay/1000} сек...`);
+        await new Promise(resolve => setTimeout(resolve, CONFIG.retryDelay));
+      }
     }
   }
   
-  throw lastError || new Error('Не удалось выполнить запрос после всех попыток');
+  throw lastError || new Error('Не удалось выполнить запрос');
 }
 
 // ==================== ТЕХНИЧЕСКИЕ ИНДИКАТОРЫ ====================
@@ -275,39 +249,12 @@ function calculateVolumeStrength(volumes, period = 20) {
   return currentVolume / avgVolume;
 }
 
-function calculateADX(highs, lows, closes, period = 14) {
-  if (!highs || highs.length < period + 1) return 0;
-  const dmPlus = [];
-  const dmMinus = [];
-  const tr = [];
-  for (let i = 1; i < closes.length; i++) {
-    const highDiff = highs[i] - highs[i - 1];
-    const lowDiff = lows[i - 1] - lows[i];
-    dmPlus.push(highDiff > lowDiff && highDiff > 0 ? highDiff : 0);
-    dmMinus.push(lowDiff > highDiff && lowDiff > 0 ? lowDiff : 0);
-    const trueRange = Math.max(
-      highs[i] - lows[i],
-      Math.abs(highs[i] - closes[i - 1]),
-      Math.abs(lows[i] - closes[i - 1])
-    );
-    tr.push(trueRange);
-  }
-  const avgDmPlus = dmPlus.slice(-period).reduce((a, b) => a + b, 0) / period;
-  const avgDmMinus = dmMinus.slice(-period).reduce((a, b) => a + b, 0) / period;
-  const avgTR = tr.slice(-period).reduce((a, b) => a + b, 0) / period;
-  if (avgTR === 0) return 0;
-  const diPlus = (avgDmPlus / avgTR) * 100;
-  const diMinus = (avgDmMinus / avgTR) * 100;
-  const dx = Math.abs(diPlus - diMinus) / (diPlus + diMinus) * 100;
-  return parseFloat(dx.toFixed(2));
-}
-
 const bot = new Telegraf(BOT_TOKEN);
 
 // ==================== КОМАНДЫ БОТА ====================
 bot.start((ctx) => {
   console.log('📱 Получена команда /start от:', ctx.from.id);
-  const welcomeMessage = `🤖 <b>Bybit Scalper Bot v4.0</b>
+  const welcomeMessage = `🤖 <b>Bybit Scalper Bot v5.0</b>
 
 🎯 <b>Активные индикаторы:</b>
 • EMA (9, 21, 50) - Тренд
@@ -316,27 +263,24 @@ bot.start((ctx) => {
 • Bollinger Bands (20, 2) - Волатильность
 • Stochastic (14, 3, 3) - Моментум
 • ATR (14) - Динамические стопы
-• ADX (14) - Сила тренда
 • Volume Analysis - Объемы
 
 📊 <b>Параметры сканирования:</b>
-• Топ 30 растущих монет
-• Топ 30 падающих монет
-• Минимальный объем: ${(CONFIG.min24hVolume / 1000000).toFixed(1)}M USDT
+• Топ 25 растущих монет
+• Топ 25 падающих монет
+• Минимальный объем: ${(CONFIG.min24hVolume / 1000000).toFixed(2)}M USDT
 • Минимум подтверждений: ${CONFIG.minConfirmations}
 • R:R соотношение: 1:${CONFIG.minRRRatio}
 
-🌐 <b>Особенности:</b>
-• Автоматическая смена прокси
-• Ротация API endpoints
-• Защита от блокировок
+🌐 <b>Используется прокси:</b>
+✅ 141.226.244.38:12323
 
 ⏰ <b>Расписание:</b>
 Автоматическое сканирование каждые 30 минут
 
 🎖️ <b>Уровни сигналов:</b>
-👑 GOD TIER - Уверенность ≥80%
-💎 PREMIUM - Уверенность ≥60%
+👑 GOD TIER - Уверенность ≥75%
+💎 PREMIUM - Уверенность ≥55%
 
 ✅ Бот работает на Bybit Spot!`;
 
@@ -348,9 +292,13 @@ bot.command('status', (ctx) => {
   ctx.reply(
     `✅ <b>Бот активен</b>\n\n` +
     `📡 API Endpoint: ${getCurrentEndpoint()}\n` +
-    `🌐 Прокси: ${CONFIG.useProxy ? 'Включен' : 'Выключен'}\n` +
+    `🌐 Прокси: 141.226.244.38:12323\n` +
     `⏰ Сканирование: каждые 30 минут\n` +
-    `🎯 Следующий запуск через: ${getNextScanTime()}`,
+    `🎯 Следующий запуск через: ${getNextScanTime()}\n\n` +
+    `📊 Параметры:\n` +
+    `• Min Volume: ${(CONFIG.min24hVolume/1000000).toFixed(2)}M USDT\n` +
+    `• Min R:R: 1:${CONFIG.minRRRatio}\n` +
+    `• Min Confidence: ${CONFIG.minConfidence}%`,
     { parse_mode: 'HTML' }
   );
 });
@@ -358,7 +306,7 @@ bot.command('status', (ctx) => {
 bot.command('test', async (ctx) => {
   console.log('📱 Получена команда /test от:', ctx.from.id);
   try {
-    await ctx.reply('🧪 Тестирую подключение к Bybit API...');
+    await ctx.reply('🧪 Тестирую подключение к Bybit через прокси...');
     
     const testData = await makeBybitRequest('/v5/market/tickers', {
       category: 'spot',
@@ -366,51 +314,49 @@ bot.command('test', async (ctx) => {
     });
     
     if (testData.retCode === 0) {
-      await ctx.reply(`✅ Bybit API доступен! Endpoint: ${getCurrentEndpoint()}`);
+      await ctx.reply(`✅ Успех! Подключение через прокси работает!`);
       await ctx.reply(`📊 Получено пар: ${testData.result.list?.length || 0}`);
       
       if (testData.result.list && testData.result.list.length > 0) {
-        const sample = testData.result.list.slice(0, 3);
-        let message = `Примеры пар:\n`;
-        sample.forEach(pair => {
-          message += `\n${pair.symbol}: $${pair.lastPrice} (${(pair.price24hPcnt * 100).toFixed(2)}%)`;
-        });
-        await ctx.reply(message);
+        const sample = testData.result.list[0];
+        await ctx.reply(
+          `Пример пары:\n` +
+          `Символ: ${sample.symbol}\n` +
+          `Цена: $${sample.lastPrice}\n` +
+          `Изменение 24h: ${(sample.price24hPcnt * 100).toFixed(2)}%\n` +
+          `Объем: $${(parseFloat(sample.turnover24h) / 1000).toFixed(1)}K`
+        );
       }
     } else {
       await ctx.reply(`⚠️ Bybit API вернул: ${testData.retMsg}`);
     }
     
-    await ctx.reply('✅ Тест подключения завершен!');
   } catch (error) {
     console.error('❌ Ошибка теста:', error.message);
     await ctx.reply(`❌ Ошибка подключения: ${error.message}`);
   }
 });
 
-bot.command('proxy', async (ctx) => {
+bot.command('proxy', (ctx) => {
   console.log('📱 Получена команда /proxy от:', ctx.from.id);
-  try {
-    const currentProxy = getCurrentProxy();
-    const currentEndpoint = getCurrentEndpoint();
-    
-    await ctx.reply(
-      `🌐 <b>Текущие настройки сети:</b>\n\n` +
-      `Endpoint: ${currentEndpoint}\n` +
-      `Прокси: ${currentProxy || 'Не используется'}\n` +
-      `Статус прокси: ${CONFIG.useProxy ? '✅ Включен' : '❌ Выключен'}\n\n` +
-      `Альтернативные endpoints:\n${CONFIG.apiEndpoints.map(e => `• ${e}`).join('\n')}`,
-      { parse_mode: 'HTML' }
-    );
-  } catch (error) {
-    await ctx.reply(`❌ Ошибка: ${error.message}`);
-  }
+  ctx.reply(
+    `🌐 <b>Текущие сетевые настройки:</b>\n\n` +
+    `✅ <b>Прокси активен:</b>\n` +
+    `IP: 141.226.244.38\n` +
+    `Port: 12323\n` +
+    `Username: 14db7c2b55cdd\n` +
+    `Password: ********\n\n` +
+    `📡 <b>API Endpoints:</b>\n` +
+    `• ${CONFIG.apiEndpoints.join('\n• ')}\n\n` +
+    `🔄 <b>Текущий:</b> ${getCurrentEndpoint()}`,
+    { parse_mode: 'HTML' }
+  );
 });
 
 bot.command('scan', async (ctx) => {
   console.log('📱 Получена команда /scan от:', ctx.from.id);
   try {
-    await ctx.reply('🔍 Запускаю ручное сканирование...');
+    await ctx.reply('🔍 Запускаю ручное сканирование через прокси...');
     await runSignalsTask(true);
   } catch (error) {
     console.error('❌ Ошибка ручного сканирования:', error);
@@ -428,7 +374,7 @@ function getNextScanTime() {
 // ==================== ПОЛУЧЕНИЕ ДАННЫХ ====================
 async function getTopMovers() {
   try {
-    console.log('📡 Запрос данных с Bybit...');
+    console.log('📡 Запрос данных через прокси...');
     
     const response = await makeBybitRequest('/v5/market/tickers', {
       category: CONFIG.category
@@ -456,23 +402,26 @@ async function getTopMovers() {
              Math.abs(change) > 0.001;
     });
     
-    console.log(`✅ Отфильтровано ${usdtPairs.length} USDT пар с объемом >${(CONFIG.min24hVolume/1000000).toFixed(2)}M`);
+    console.log(`✅ Отфильтровано ${usdtPairs.length} USDT пар`);
     
     const pairsWithChange = usdtPairs.map(pair => ({
       symbol: pair.symbol,
       change: (parseFloat(pair.price24hPcnt) || 0) * 100,
       volume: parseFloat(pair.turnover24h) || 0,
-      price: parseFloat(pair.lastPrice) || 0,
-      high24h: parseFloat(pair.highPrice24h) || 0,
-      low24h: parseFloat(pair.lowPrice24h) || 0
+      price: parseFloat(pair.lastPrice) || 0
     }));
     
+    // Сортируем по изменению
     const sorted = pairsWithChange.sort((a, b) => b.change - a.change);
     const topGainers = sorted.slice(0, CONFIG.topGainers);
     const topLosers = sorted.slice(-CONFIG.topLosers).reverse();
     
-    console.log(`✅ Топ роста: ${topGainers.length} пар`);
-    console.log(`✅ Топ падения: ${topLosers.length} пар`);
+    if (topGainers.length > 0) {
+      console.log(`📈 Топ роста: ${topGainers[0].symbol} +${topGainers[0].change.toFixed(2)}%`);
+    }
+    if (topLosers.length > 0) {
+      console.log(`📉 Топ падения: ${topLosers[0].symbol} ${topLosers[0].change.toFixed(2)}%`);
+    }
     
     return [...topGainers, ...topLosers];
   } catch (error) {
@@ -484,20 +433,19 @@ async function getTopMovers() {
 // ==================== АНАЛИЗ СИГНАЛА ====================
 async function analyzeSignal(pair) {
   try {
-    console.log(`🔍 Анализ пары: ${pair.symbol} (${pair.change > 0 ? '+' : ''}${pair.change.toFixed(2)}%)`);
+    console.log(`🔍 Анализ: ${pair.symbol} (${pair.change > 0 ? '+' : ''}${pair.change.toFixed(2)}%)`);
     
-    // Добавляем задержку
+    // Задержка для избежания лимитов
     await new Promise(resolve => setTimeout(resolve, 800));
     
     const candleResponse = await makeBybitRequest('/v5/market/kline', {
       category: CONFIG.category,
       symbol: pair.symbol,
       interval: CONFIG.timeframe,
-      limit: 100
+      limit: 80
     });
     
     if (!candleResponse.result?.list || candleResponse.result.list.length < 50) {
-      console.log(`⚠️ Недостаточно данных для ${pair.symbol}`);
       return null;
     }
     
@@ -513,126 +461,62 @@ async function analyzeSignal(pair) {
     
     const currentPrice = closes[closes.length - 1];
     
-    // Рассчитываем индикаторы
+    // Индикаторы
     const rsi = calculateRSI(closes);
     const ema9 = calculateEMA(closes, 9);
     const ema21 = calculateEMA(closes, 21);
-    const ema50 = calculateEMA(closes, 50);
     const macd = calculateMACD(closes);
     const bb = calculateBollingerBands(closes);
     const stoch = calculateStochastic(highs, lows, closes);
     const atr = calculateATR(highs, lows, closes);
     const volumeStrength = calculateVolumeStrength(volumes);
-    const adx = calculateADX(highs, lows, closes);
     
-    // Собираем подтверждения
+    // Подтверждения
     const confirmations = [];
-    let qualityScore = 0;
     
-    // Анализ индикаторов
-    if (rsi < 35) {
-      confirmations.push('RSI_OVERSOLD');
-      qualityScore += 2;
-    } else if (rsi > 65) {
-      confirmations.push('RSI_OVERBOUGHT');
-      qualityScore += 2;
-    }
-    
-    if (macd.histogram > 0) {
-      confirmations.push('MACD_POSITIVE');
-      qualityScore += 1;
-    }
-    if (macd.macd > macd.signal) {
-      confirmations.push('MACD_CROSS_BULLISH');
-      qualityScore += 1;
-    }
+    if (rsi < 35) confirmations.push('RSI_OVERSOLD');
+    if (rsi > 65) confirmations.push('RSI_OVERBOUGHT');
+    if (macd.histogram > 0) confirmations.push('MACD_BULLISH');
+    if (macd.histogram < 0) confirmations.push('MACD_BEARISH');
     
     if (bb) {
       const bbPosition = (currentPrice - bb.lower) / (bb.upper - bb.lower) * 100;
-      if (bbPosition < 25) {
-        confirmations.push('BB_NEAR_LOWER');
-        qualityScore += 2;
-      } else if (bbPosition > 75) {
-        confirmations.push('BB_NEAR_UPPER');
-        qualityScore += 2;
-      }
+      if (bbPosition < 25) confirmations.push('BB_OVERSOLD');
+      if (bbPosition > 75) confirmations.push('BB_OVERBOUGHT');
     }
     
-    if (stoch.k < 25) {
-      confirmations.push('STOCH_OVERSOLD');
-      qualityScore += 2;
-    } else if (stoch.k > 75) {
-      confirmations.push('STOCH_OVERBOUGHT');
-      qualityScore += 2;
+    if (stoch.k < 25) confirmations.push('STOCH_OVERSOLD');
+    if (stoch.k > 75) confirmations.push('STOCH_OVERBOUGHT');
+    
+    if (ema9 && ema21) {
+      if (currentPrice > ema9 && ema9 > ema21) confirmations.push('UPTREND');
+      if (currentPrice < ema9 && ema9 < ema21) confirmations.push('DOWNTREND');
     }
     
-    if (ema9 && ema21 && ema50) {
-      if (currentPrice > ema9 && ema9 > ema21 && ema21 > ema50) {
-        confirmations.push('STRONG_UPTREND');
-        qualityScore += 3;
-      } else if (currentPrice < ema9 && ema9 < ema21 && ema21 < ema50) {
-        confirmations.push('STRONG_DOWNTREND');
-        qualityScore += 3;
-      }
-    }
+    if (volumeStrength > 1.3) confirmations.push('HIGH_VOLUME');
     
-    if (volumeStrength > 1.3) {
-      confirmations.push('HIGH_VOLUME');
-      qualityScore += 2;
-    }
-    
-    if (adx > 25) {
-      confirmations.push('STRONG_TREND');
-      qualityScore += 2;
-    }
-    
-    // Проверяем минимальное количество подтверждений
     if (confirmations.length < CONFIG.minConfirmations) {
       return null;
     }
     
-    // Определяем направление
+    // Определяем сигнал
     let signal = null;
     let confidence = 0;
     
-    const bullishScore = 
-      (pair.change > 0 ? 2 : 0) +
-      (rsi < 45 ? 1 : 0) +
-      (macd.histogram > 0 ? 2 : 0) +
-      (stoch.k < 50 ? 1 : 0) +
-      (ema9 && ema21 && currentPrice > ema9 && ema9 > ema21 ? 3 : 0) +
-      (volumeStrength > 1.2 ? 2 : 0);
+    const bullishCount = confirmations.filter(c => 
+      ['RSI_OVERSOLD', 'MACD_BULLISH', 'BB_OVERSOLD', 'STOCH_OVERSOLD', 'UPTREND'].includes(c)
+    ).length;
     
-    const bearishScore = 
-      (pair.change < 0 ? 2 : 0) +
-      (rsi > 55 ? 1 : 0) +
-      (macd.histogram < 0 ? 2 : 0) +
-      (stoch.k > 50 ? 1 : 0) +
-      (ema9 && ema21 && currentPrice < ema9 && ema9 < ema21 ? 3 : 0) +
-      (volumeStrength > 1.2 ? 2 : 0);
+    const bearishCount = confirmations.filter(c => 
+      ['RSI_OVERBOUGHT', 'MACD_BEARISH', 'BB_OVERBOUGHT', 'STOCH_OVERBOUGHT', 'DOWNTREND'].includes(c)
+    ).length;
     
-    if (bullishScore >= 6) {
+    if (bullishCount >= 3 && pair.change > -5) {
       signal = 'LONG';
-      confidence = Math.min(
-        50 + 
-        (40 - Math.min(rsi, 40)) * 0.5 +
-        (macd.histogram > 0 ? 15 : 0) +
-        (stoch.k < 30 ? 10 : 0) +
-        (adx > 20 ? 5 : 0) +
-        confirmations.length * 3,
-        90
-      );
-    } else if (bearishScore >= 6) {
+      confidence = Math.min(70 + bullishCount * 5 + (pair.change > 0 ? 5 : 0), 90);
+    } else if (bearishCount >= 3 && pair.change < 5) {
       signal = 'SHORT';
-      confidence = Math.min(
-        50 +
-        (Math.max(rsi, 60) - 60) * 0.5 +
-        (macd.histogram < 0 ? 15 : 0) +
-        (stoch.k > 70 ? 10 : 0) +
-        (adx > 20 ? 5 : 0) +
-        confirmations.length * 3,
-        90
-      );
+      confidence = Math.min(70 + bearishCount * 5 + (pair.change < 0 ? 5 : 0), 90);
     }
     
     if (!signal || confidence < CONFIG.minConfidence) {
@@ -644,16 +528,12 @@ async function analyzeSignal(pair) {
     let sl, tp, rrRatio;
     
     if (signal === 'LONG') {
-      const atrBasedSL = entry - (atr * 1.5);
-      const fixedSL = entry * (1 - CONFIG.stopLossPercent / 100);
-      sl = Math.max(atrBasedSL, fixedSL);
+      sl = entry * (1 - CONFIG.stopLossPercent / 100);
       const risk = entry - sl;
       tp = entry + (risk * CONFIG.minRRRatio);
       rrRatio = (tp - entry) / (entry - sl);
     } else {
-      const atrBasedSL = entry + (atr * 1.5);
-      const fixedSL = entry * (1 + CONFIG.stopLossPercent / 100);
-      sl = Math.min(atrBasedSL, fixedSL);
+      sl = entry * (1 + CONFIG.stopLossPercent / 100);
       const risk = sl - entry;
       tp = entry - (risk * CONFIG.minRRRatio);
       rrRatio = (entry - tp) / (sl - entry);
@@ -663,37 +543,30 @@ async function analyzeSignal(pair) {
       return null;
     }
     
-    const tier = confidence >= 80 ? 'GOD TIER' : 
-                 confidence >= 70 ? 'PREMIUM' : 
+    const tier = confidence >= 75 ? 'GOD TIER' : 
+                 confidence >= 65 ? 'PREMIUM' : 
                  'STANDARD';
     
-    console.log(`✅ СИГНАЛ: ${signal} ${pair.symbol} (${confidence.toFixed(0)}%, R:R 1:${rrRatio.toFixed(1)})`);
+    console.log(`✅ СИГНАЛ: ${tier} ${signal} ${pair.symbol} (${confidence}%)`);
     
     return {
       pair: pair.symbol.replace('USDT', '/USDT'),
       signal,
-      entry: parseFloat(entry.toFixed(8)),
-      tp: parseFloat(tp.toFixed(8)),
-      sl: parseFloat(sl.toFixed(8)),
+      entry: parseFloat(entry.toFixed(6)),
+      tp: parseFloat(tp.toFixed(6)),
+      sl: parseFloat(sl.toFixed(6)),
       confidence: Math.round(confidence),
-      qualityScore: Math.min(qualityScore, 15),
       rrRatio: parseFloat(rrRatio.toFixed(2)),
       tier,
       exchange: 'BYBIT',
-      change24h: pair.change,
+      change24h: parseFloat(pair.change.toFixed(2)),
       volume24h: pair.volume,
       indicators: {
         rsi: Math.round(rsi),
-        macd_hist: parseFloat(macd.histogram.toFixed(6)),
+        macd_hist: parseFloat(macd.histogram.toFixed(4)),
         stoch_k: stoch.k,
-        stoch_d: stoch.d,
-        ema9: ema9 ? parseFloat(ema9.toFixed(8)) : null,
-        ema21: ema21 ? parseFloat(ema21.toFixed(8)) : null,
-        ema50: ema50 ? parseFloat(ema50.toFixed(8)) : null,
         bb_position: bb ? parseFloat(((currentPrice - bb.lower) / (bb.upper - bb.lower) * 100).toFixed(1)) : null,
-        atr: parseFloat(atr.toFixed(8)),
-        volume_strength: parseFloat(volumeStrength.toFixed(2)),
-        adx: adx
+        volume_strength: parseFloat(volumeStrength.toFixed(2))
       },
       confirmations,
       timestamp: new Date()
@@ -710,9 +583,9 @@ async function generateSignals() {
   try {
     console.log('\n🎯 НАЧАЛО СКАНИРОВАНИЯ');
     console.log('='.repeat(60));
-    console.log(`⏰ Время: ${new Date().toLocaleString('ru-RU')}`);
+    console.log(`⏰ ${new Date().toLocaleString('ru-RU')}`);
     console.log(`🌐 Endpoint: ${getCurrentEndpoint()}`);
-    console.log(`🔧 Прокси: ${CONFIG.useProxy ? 'Включен' : 'Выключен'}`);
+    console.log(`🔧 Прокси: 141.226.244.38:12323`);
     console.log('='.repeat(60));
     
     const topMovers = await getTopMovers();
@@ -732,37 +605,33 @@ async function generateSignals() {
         signals.push(signal);
       }
       
-      // Задержка и ротация прокси каждые 5 запросов
-      if (i > 0 && i % 5 === 0) {
-        console.log(`⏳ Проанализировано ${i + 1}/${topMovers.length} пар`);
-        rotateProxy(); // Меняем прокси
-        await new Promise(resolve => setTimeout(resolve, 2000));
-      } else {
+      // Задержка между запросами
+      if (i < topMovers.length - 1) {
         await new Promise(resolve => setTimeout(resolve, 1000));
       }
     }
     
-    // Сортируем сигналы
+    // Сортируем по уверенности
     signals.sort((a, b) => b.confidence - a.confidence);
     
     console.log('='.repeat(60));
-    console.log(`📊 РЕЗУЛЬТАТЫ: Найдено ${signals.length} сигналов`);
+    console.log(`📊 РЕЗУЛЬТАТЫ: ${signals.length} сигналов`);
     signals.forEach((s, i) => {
-      console.log(`   ${i + 1}. ${s.tier} ${s.signal} ${s.pair}: ${s.confidence}% (R:R 1:${s.rrRatio})`);
+      console.log(`${i + 1}. ${s.tier} ${s.signal} ${s.pair} (${s.confidence}%, R:R 1:${s.rrRatio})`);
     });
     console.log('='.repeat(60));
     
-    return signals.slice(0, 10);
+    return signals.slice(0, 5); // Не более 5 сигналов
   } catch (error) {
     console.error('❌ Ошибка генерации сигналов:', error);
     return [];
   }
 }
 
-// ==================== ОТПРАВКА В TELEGRAM ====================
+// ==================== ОТПРАВКА СИГНАЛОВ ====================
 async function sendSignalToTelegram(signal) {
   if (!CHAT_ID) {
-    console.log('⚠️  CHAT_ID не установлен, пропускаю отправку');
+    console.log('⚠️  CHAT_ID не установлен');
     return false;
   }
   
@@ -775,14 +644,14 @@ async function sendSignalToTelegram(signal) {
       ? ((1 - signal.sl / signal.entry) * 100).toFixed(2)
       : ((signal.sl / signal.entry - 1) * 100).toFixed(2);
     
-    const emoji = signal.tier === 'GOD TIER' ? '👑' : signal.tier === 'PREMIUM' ? '💎' : '📊';
+    const emoji = signal.tier === 'GOD TIER' ? '👑' : '💎';
     
     const message = `
 ${emoji} <b>${signal.tier} SIGNAL</b>
 
 ${signal.signal === 'LONG' ? '🟢' : '🔴'} <b>${signal.signal} ${signal.pair}</b>
 
-📈 <b>24h Change:</b> ${signal.change24h > 0 ? '+' : ''}${signal.change24h.toFixed(2)}%
+📈 <b>24h Change:</b> ${signal.change24h > 0 ? '+' : ''}${signal.change24h}%
 💰 <b>24h Volume:</b> $${(signal.volume24h / 1000000).toFixed(2)}M
 
 🎯 <b>Entry:</b> ${signal.entry}
@@ -791,29 +660,26 @@ ${signal.signal === 'LONG' ? '🟢' : '🔴'} <b>${signal.signal} ${signal.pair}
 
 📊 <b>R:R Ratio:</b> 1:${signal.rrRatio}
 🔮 <b>Confidence:</b> ${signal.confidence}%
-🏆 <b>Quality Score:</b> ${signal.qualityScore}/15
 
 <b>📉 ИНДИКАТОРЫ:</b>
 • RSI: ${signal.indicators.rsi}
 • MACD Hist: ${signal.indicators.macd_hist}
-• Stoch K/D: ${signal.indicators.stoch_k}/${signal.indicators.stoch_d}
+• Stoch K: ${signal.indicators.stoch_k}
 • BB Position: ${signal.indicators.bb_position}%
-• ATR: ${signal.indicators.atr}
 • Volume: x${signal.indicators.volume_strength}
-• ADX: ${signal.indicators.adx}
 
-<b>✅ ПОДТВЕРЖДЕНИЯ (${signal.confirmations.length}):</b>
-${signal.confirmations.slice(0, 8).map(c => `• ${c.replace(/_/g, ' ')}`).join('\n')}
+<b>✅ ПОДТВЕРЖДЕНИЯ:</b>
+${signal.confirmations.slice(0, 6).map(c => `• ${c.replace(/_/g, ' ')}`).join('\n')}
 
 ⏰ ${signal.timestamp.toLocaleTimeString('ru-RU', {hour: '2-digit', minute:'2-digit'})}
 🏦 <b>Exchange: BYBIT SPOT</b>
     `.trim();
     
     await bot.telegram.sendMessage(CHAT_ID, message, { parse_mode: 'HTML' });
-    console.log(`✅ Отправлен сигнал: ${signal.tier} ${signal.signal} ${signal.pair}`);
+    console.log(`✅ Отправлен сигнал: ${signal.pair}`);
     return true;
   } catch (error) {
-    console.error('❌ Ошибка отправки в Telegram:', error.message);
+    console.error('❌ Ошибка отправки:', error.message);
     return false;
   }
 }
@@ -822,7 +688,7 @@ ${signal.confirmations.slice(0, 8).map(c => `• ${c.replace(/_/g, ' ')}`).join(
 async function runSignalsTask(isManual = false) {
   if (!isManual) {
     console.log('\n' + '█'.repeat(60));
-    console.log('🔄 ЗАПУСК АВТОМАТИЧЕСКОГО СКАНИРОВАНИЯ');
+    console.log('🔄 АВТОМАТИЧЕСКОЕ СКАНИРОВАНИЕ');
     console.log(`⏰ ${new Date().toLocaleString('ru-RU')}`);
     console.log('█'.repeat(60));
   }
@@ -849,10 +715,10 @@ async function runSignalsTask(isManual = false) {
     
     for (const signal of signals) {
       await sendSignalToTelegram(signal);
-      await new Promise(resolve => setTimeout(resolve, 2000));
+      await new Promise(resolve => setTimeout(resolve, 1500));
     }
     
-    console.log(`✅ Сканирование завершено. Сигналов: ${signals.length}`);
+    console.log(`✅ Сканирование завершено`);
     
   } catch (error) {
     console.error('❌ Ошибка сканирования:', error);
@@ -862,71 +728,62 @@ async function runSignalsTask(isManual = false) {
 // ==================== ЗАПУСК БОТА ====================
 async function start() {
   try {
-    console.log('\n🔄 Инициализация Telegram бота...');
-    
-    await bot.launch({ 
-      dropPendingUpdates: true,
-      allowedUpdates: ['message']
-    });
-    
-    console.log('✅ Telegram бот запущен');
+    console.log('\n🔄 Инициализация бота...');
     
     console.log('\n' + '█'.repeat(60));
-    console.log('🤖 BYBIT SCALPER BOT v4.0 - ЗАПУЩЕН');
+    console.log('🤖 BYBIT SCALPER BOT v5.0');
+    console.log('🌐 С ПРОКСИ ПОДКЛЮЧЕНИЕМ');
     console.log('█'.repeat(60));
     console.log('');
-    console.log('🌐 СЕТЕВЫЕ НАСТРОЙКИ:');
-    console.log(`   • Прокси: ${CONFIG.useProxy ? 'Включен' : 'Выключен'}`);
-    console.log(`   • Endpoints: ${CONFIG.apiEndpoints.length} доступно`);
-    console.log(`   • Текущий endpoint: ${getCurrentEndpoint()}`);
-    console.log('');
-    console.log('📊 ПАРАМЕТРЫ:');
-    console.log(`   • Объем > ${(CONFIG.min24hVolume/1000000).toFixed(2)}M USDT`);
+    console.log('📊 КОНФИГУРАЦИЯ:');
+    console.log(`   • Прокси: 141.226.244.38:12323`);
+    console.log(`   • Endpoint: ${getCurrentEndpoint()}`);
+    console.log(`   • Min Volume: ${(CONFIG.min24hVolume/1000000).toFixed(2)}M USDT`);
     console.log(`   • Min R:R: 1:${CONFIG.minRRRatio}`);
-    console.log(`   • Min Confidence: ${CONFIG.minConfidence}%`);
     console.log('');
-    console.log('⏰ РАСПИСАНИЕ: Каждые 30 минут');
-    console.log('📱 КОМАНДЫ: /start, /status, /test, /scan, /proxy');
+    console.log('⏰ РАСПИСАНИЕ: каждые 30 минут');
+    console.log('📱 КОМАНДЫ: /start, /test, /scan, /status, /proxy');
     console.log('█'.repeat(60));
     console.log('');
+    
+    // Запускаем Telegram бота
+    await bot.launch({ dropPendingUpdates: true });
+    console.log('✅ Telegram бот запущен');
     
     if (CHAT_ID) {
       try {
         await bot.telegram.sendMessage(
           CHAT_ID,
-          `🚀 <b>Bybit Scalper Bot v4.0 запущен!</b>\n\n` +
-          `🌐 <b>Сетевые настройки:</b>\n` +
-          `• Endpoint: ${getCurrentEndpoint()}\n` +
-          `• Прокси: ${CONFIG.useProxy ? '✅ Включен' : '❌ Выключен'}\n\n` +
-          `📊 <b>Параметры сканирования:</b>\n` +
+          `🚀 <b>Bybit Scalper Bot v5.0 запущен!</b>\n\n` +
+          `🌐 <b>Используется прокси:</b>\n` +
+          `IP: 141.226.244.38\n` +
+          `Порт: 12323\n\n` +
+          `📊 <b>Параметры:</b>\n` +
           `• Объем > ${(CONFIG.min24hVolume/1000000).toFixed(2)}M USDT\n` +
-          `• R:R > 1:${CONFIG.minRRRatio}\n\n` +
-          `⏰ <b>Расписание:</b>\n` +
-          `• Автосканирование: каждые 30 мин\n` +
-          `• Первое сканирование: через 2 минуты\n\n` +
-          `🏦 Биржа: Bybit Spot\n` +
-          `📱 Команды: /test /scan /status /proxy`,
+          `• R:R > 1:${CONFIG.minRRRatio}\n` +
+          `• Confidence > ${CONFIG.minConfidence}%\n\n` +
+          `⏰ <b>Первое сканирование через 1 минуту</b>\n\n` +
+          `📱 Команды: /test /scan /status`,
           { parse_mode: 'HTML' }
         );
         console.log('✅ Стартовое сообщение отправлено');
       } catch (error) {
-        console.error('❌ Ошибка отправки сообщения:', error.message);
+        console.error('❌ Ошибка отправки:', error.message);
       }
     }
     
-    // Настраиваем планировщик
+    // Планировщик
     cron.schedule('*/30 * * * *', () => {
       console.log(`\n⏰ Запуск по расписанию: ${new Date().toLocaleString('ru-RU')}`);
       runSignalsTask(false);
     });
     
-    console.log('⏳ Первое сканирование через 2 минуты...\n');
+    console.log('⏳ Первое сканирование через 1 минуту...');
     
-    // Первое сканирование
     setTimeout(() => {
-      console.log(`\n🎯 Запуск первого сканирования: ${new Date().toLocaleString('ru-RU')}`);
+      console.log(`\n🎯 Первое сканирование: ${new Date().toLocaleString('ru-RU')}`);
       runSignalsTask(false);
-    }, 120000);
+    }, 60000);
     
   } catch (error) {
     console.error('❌ Ошибка запуска:', error.message);
@@ -934,7 +791,7 @@ async function start() {
   }
 }
 
-// Обработчики завершения
+// Обработчики
 process.once('SIGINT', () => {
   console.log('\n⚠️  Остановка бота...');
   bot.stop('SIGINT');
