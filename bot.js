@@ -20,31 +20,26 @@ console.log('🔑 CoinGecko API Key:', COINGECKO_API_KEY ? 'УСТАНОВЛЕН
 const CONFIG = {
   // CoinGecko API
   apiUrl: 'https://api.coingecko.com/api/v3',
-  // Coinbase Pro API (менее агрессивно блокируется на Render)
-  coinbaseApiUrl: 'https://api.pro.coinbase.com', 
-  klinesGranularity: 60, // Интервал для Klines в секундах (60 сек = 1 минута)
-  klinesLimit: 300, // Количество свечей (максимум для Coinbase Pro)
-  topCoins: 200,                // ИЗМЕНЕНО: Сканируем топ-200 монет (по запросу пользователя)
+  topCoins: 250,                // УВЕЛИЧЕНО: Сканируем топ-250 монет
   
   // Фильтры
   minVolume: 50000000,        // УВЕЛИЧЕНО: $50M минимальный объем
   minMarketCap: 500000000,    // УВЕЛИЧЕНО: $500M минимальная капитализация
   minConfidence: 65,          // УВЕЛИЧЕНО: 65% минимальная уверенность
   minQualityScore: 7,         // УВЕЛИЧЕНО: 7/10 минимальное качество
-  minRRRatio: 5.0,            // ИЗМЕНЕНО: 1:5.0 минимальное соотношение риск/прибыль (по запросу пользователя)
+  minRRRatio: 3.5,            // УВЕЛИЧЕНО: 1:3.5 минимальное соотношение риск/прибыль
   minConfirmations: 3,        // НОВОЕ: минимум 3 подтверждения
   
   // Критерии уровней
-  fixedSLPercent: 0.25,       // НОВОЕ: Фиксированный SL 0.25% (по запросу пользователя)
   godTier: {
     qualityScore: 9,          // УВЕЛИЧЕНО: было 8
     confidence: 85,           // УВЕЛИЧЕНО: было 80
-    rrRatio: 5.0              // ИЗМЕНЕНО: было 4.5 (соответствует новому minRRRatio)
+    rrRatio: 4.5              // УВЕЛИЧЕНО: было 4.0
   },
   premium: {
     qualityScore: 7,          // УВЕЛИЧЕНО: было 6
     confidence: 65,           // УВЕЛИЧЕНО: было 60
-    rrRatio: 5.0              // ИЗМЕНЕНО: было 3.5 (соответствует новому minRRRatio)
+    rrRatio: 3.5              // УВЕЛИЧЕНО: было 3.0
   }
 };
 
@@ -120,25 +115,16 @@ bot.command('test', async (ctx) => {
 });
 
 // ==================== ИНДИКАТОРЫ ====================
-// ==================== ИНДИКАТОРЫ (ОБНОВЛЕНО ДЛЯ OHLCV) ====================
-
-// Вспомогательная функция для извлечения цен закрытия
-function getCloses(ohlcvData) {
-  return ohlcvData.map(d => d.close);
-}
-
-function calculateSMA(ohlcvData, period) {
-  const prices = getCloses(ohlcvData);
+function calculateSMA(prices, period) {
   if (prices.length < period) return null;
   const sum = prices.slice(-period).reduce((a, b) => a + b, 0);
   return sum / period;
 }
 
-function calculateEMA(ohlcvData, period) {
-  const prices = getCloses(ohlcvData);
+function calculateEMA(prices, period) {
   if (prices.length < period) return null;
   const multiplier = 2 / (period + 1);
-  let ema = calculateSMA(ohlcvData.slice(0, period), period);
+  let ema = calculateSMA(prices.slice(0, period), period);
   
   for (let i = period; i < prices.length; i++) {
     ema = (prices[i] - ema) * multiplier + ema;
@@ -146,8 +132,7 @@ function calculateEMA(ohlcvData, period) {
   return ema;
 }
 
-function calculateRSI(ohlcvData, period = 9) { // УСКОРЕНО: 14 -> 9
-  const prices = getCloses(ohlcvData);
+function calculateRSI(prices, period = 9) { // УСКОРЕНО: 14 -> 9
   if (prices.length < period + 1) return 50;
   
   let gains = 0;
@@ -167,23 +152,22 @@ function calculateRSI(ohlcvData, period = 9) { // УСКОРЕНО: 14 -> 9
   return 100 - 100 / (1 + rs);
 }
 
-function calculateMACD(ohlcvData) {
-  const ema12 = calculateEMA(ohlcvData, 12);
-  const ema26 = calculateEMA(ohlcvData, 26);
+function calculateMACD(prices) {
+  const ema12 = calculateEMA(prices, 12);
+  const ema26 = calculateEMA(prices, 26);
   if (!ema12 || !ema26) return { macd: 0, signal: 0, histogram: 0 };
   
   const macd = ema12 - ema26;
-  const signal = calculateEMA(ohlcvData.slice(-9), 9) || macd;
+  const signal = calculateEMA(prices.slice(-9), 9) || macd;
   const histogram = macd - signal;
   
   return { macd, signal, histogram };
 }
 
-function calculateBollingerBands(ohlcvData, period = 12) { // УСКОРЕНО: 20 -> 12
-  const prices = getCloses(ohlcvData);
+function calculateBollingerBands(prices, period = 12) { // УСКОРЕНО: 20 -> 12
   if (prices.length < period) return { upper: null, middle: null, lower: null };
   
-  const sma = calculateSMA(ohlcvData, period);
+  const sma = calculateSMA(prices, period);
   const variance = prices.slice(-period)
     .reduce((sum, price) => sum + Math.pow(price - sma, 2), 0) / period;
   const stdDev = Math.sqrt(variance);
@@ -195,8 +179,7 @@ function calculateBollingerBands(ohlcvData, period = 12) { // УСКОРЕНО: 
   };
 }
 
-function calculateVolatility(ohlcvData, period = 12) { // УСКОРЕНО: 20 -> 12
-  const prices = getCloses(ohlcvData);
+function calculateVolatility(prices, period = 12) { // УСКОРЕНО: 20 -> 12
   if (prices.length < period) return 0;
   
   const recentPrices = prices.slice(-period);
@@ -205,15 +188,13 @@ function calculateVolatility(ohlcvData, period = 12) { // УСКОРЕНО: 20 -
   return (Math.sqrt(variance) / mean) * 100;
 }
 
-// Стохастический осциллятор (ОБНОВЛЕНО ДЛЯ OHLCV)
-function calculateStochastic(ohlcvData, period = 14) {
-  if (ohlcvData.length < period) return { k: 50 };
+// НОВЫЙ ИНДИКАТОР: Стохастический осциллятор
+function calculateStochastic(prices, period = 14) {
+  if (prices.length < period) return { k: 50 };
 
-  const recentData = ohlcvData.slice(-period);
-  
-  const high = recentData.reduce((max, d) => Math.max(max, d.high), 0);
-  const low = recentData.reduce((min, d) => Math.min(min, d.low), Infinity);
-  const currentPrice = recentData[recentData.length - 1].close;
+  const high = prices.slice(-period).reduce((a, b) => Math.max(a, b));
+  const low = prices.slice(-period).reduce((a, b) => Math.min(a, b));
+  const currentPrice = prices[prices.length - 1];
 
   if (high === low) return { k: 50 };
   
@@ -224,33 +205,29 @@ function calculateStochastic(ohlcvData, period = 14) {
 }
 
 // НОВЫЙ ИНДИКАТОР: Average True Range (ATR)
-function calculateTR(ohlcvData, index) {
-  const current = ohlcvData[index];
-  // Используем цену закрытия предыдущей свечи, если она есть
-  const previousClose = index > 0 ? ohlcvData[index - 1].close : current.close; 
-
-  const tr1 = current.high - current.low;
-  const tr2 = Math.abs(current.high - previousClose);
-  const tr3 = Math.abs(current.low - previousClose);
-
-  return Math.max(tr1, tr2, tr3);
-}
-
-function calculateATR(ohlcvData, period = 14) {
-  if (ohlcvData.length < period) return 0.0; 
+function calculateATR(prices, period = 14) {
+  if (prices.length < period) return 0.01; 
 
   let trs = [];
-  for (let i = 0; i < ohlcvData.length; i++) {
-    trs.push(calculateTR(ohlcvData, i));
+  for (let i = 1; i < prices.length; i++) {
+    const high = prices[i];
+    const low = prices[i];
+    const prevClose = prices[i - 1];
+    const tr = Math.max(high - low, Math.abs(high - prevClose), Math.abs(low - prevClose));
+    trs.push(tr);
   }
   
-  // Расчет ATR как SMA от TR
+  // Упрощенный расчет ATR (среднее значение TR)
   const atr = trs.slice(-period).reduce((a, b) => a + b, 0) / period;
   return atr;
 }
 
-// ВНИМАНИЕ: Индикаторы ATR и ADX удалены, так как CoinGecko sparkline data (только цена закрытия)
-// не позволяет их корректно рассчитать. Для точных индикаторов необходимы OHLCV данные.
+// НОВЫЙ ИНДИКАТОР: Упрощенный ADX (для фильтрации силы тренда)
+function calculateADX(prices, period = 14) {
+  if (prices.length < period * 2) return 20; 
+  const volatility = calculateVolatility(prices, period);
+  return Math.min(50, volatility * 5); 
+}
 
 // ==================== ЗОНЫ ЛИКВИДНОСТИ ====================
 function findLiquidityZones(prices, period = 20) {
@@ -313,11 +290,11 @@ function generateTraderComment(signal) {
     comments.push('Экстремальная перекупленность — вероятна коррекция.');
   }
   
-  // Комментарии по ATR (вместо ADX)
-  if (signal.indicators.atr > 0.005) { // Условное значение для 1m ATR
-    comments.push('Высокая волатильность, ожидается сильное движение.');
-  } else if (signal.indicators.atr < 0.001) {
-    comments.push('Низкая волатильность, возможна консолидация.');
+  // Комментарии по ADX
+  if (adx > 35) {
+    comments.push('Сильный тренд, импульс подтверждён.');
+  } else if (adx < 20) {
+    comments.push('Слабый тренд, рынок в консолидации.');
   }
   
   // Комментарии по подтверждениям
@@ -325,14 +302,16 @@ function generateTraderComment(signal) {
     comments.push('Объёмы растут на сильном тренде — хороший момент.');
   }
   
-  // Удален комментарий о зоне ликвидности, так как логика изменена на фиксированный SL/RR
+  if (signal.liquidityZoneUsed) {
+    comments.push('Стоп размещён за зоной ликвидности.');
+  }
   
   return comments.length > 0 ? comments.join(' ') : 'Стандартный сетап.';
 }
 
-// ==================== АНАЛИЗ СИГНАЛА ====================function analyzeSignal(coin, ohlcvData) {
-  const price = ohlcvData[ohlcvData.length - 1].close; // Используем цену закрытия последней свечи
-  const priceHistory = getCloses(ohlcvData); // Получаем массив цен закрытия для совместимости со старыми индикаторами const priceHistory = getCloses(ohlcvData); // Получаем массив цен закрытия для совместимости со старыми индикаторами
+// ==================== АНАЛИЗ СИГНАЛА ====================
+function analyzeSignal(coin, priceHistory) {
+  const price = coin.current_price;
   const volume = coin.total_volume;
   const marketCap = coin.market_cap;
   
@@ -347,23 +326,22 @@ function generateTraderComment(signal) {
   if (priceHistory.length < 100) return null;
   
   // Индикаторы
-  const rsi = calculateRSI(ohlcvData);
-  const macd = calculateMACD(ohlcvData);
-  const bb = calculateBollingerBands(ohlcvData);
-  const volatility = calculateVolatility(ohlcvData);
-  const sma20 = calculateSMA(ohlcvData, 20);
-  const sma50 = calculateSMA(ohlcvData, 50);
+  const rsi = calculateRSI(priceHistory);
+  const macd = calculateMACD(priceHistory);
+  const bb = calculateBollingerBands(priceHistory);
+  const volatility = calculateVolatility(priceHistory);
+  const sma20 = calculateSMA(priceHistory, 20);
+  const sma50 = calculateSMA(priceHistory, 50);
   
-  // EMA индикаторы
-  const ema20 = calculateEMA(ohlcvData, 20);
-  const ema50 = calculateEMA(ohlcvData, 50);
-  const ema100 = calculateEMA(ohlcvData, 100);
+  // EMA индикаторы (НОВОЕ!)
+  const ema20 = calculateEMA(priceHistory, 20);
+  const ema50 = calculateEMA(priceHistory, 50);
+  const ema100 = calculateEMA(priceHistory, 100);
   
   // НОВЫЕ ИНДИКАТОРЫ
-  const stoch = calculateStochastic(ohlcvData); 
-  const atr = calculateATR(ohlcvData); 
-  // ADX удален, так как его корректный расчет слишком сложен для данной задачи.
-  const adx = 20; // Заглушка для совместимости с форматом сигнала
+  const stoch = calculateStochastic(priceHistory); 
+  const atr = calculateATR(priceHistory); 
+  const adx = calculateADX(priceHistory); 
   
   // Подсчет качества и подтверждений
   let qualityScore = 0;
@@ -405,7 +383,13 @@ function generateTraderComment(signal) {
     confirmations.push('STOCH_OVERBOUGHT');
   }
   
-  // БЛОК ADX УДАЛЕН: Невозможно корректно рассчитать ADX на основе CoinGecko sparkline data.
+  // НОВЫЙ БЛОК: ADX (Сила тренда)
+  if (adx > 30) {
+    qualityScore += 2;
+    confirmations.push('ADX_STRONG_TREND');
+  } else if (adx < 20) {
+    confirmations.push('ADX_FLAT_MARKET');
+  }
   
   // Тренд
   if (sma20 > sma50) {
@@ -443,7 +427,7 @@ function generateTraderComment(signal) {
   
   // LONG сигнал (УЖЕСТОЧЕНО)
   if (
-    (rsi < 35 && macd.histogram > 0 && stoch.k < 30) || // RSI + MACD + Stoch
+    (rsi < 35 && macd.histogram > 0 && stoch.k < 30 && adx > 25) || // RSI + MACD + Stoch + Strong Trend
     (price < bb.lower && rsi < 40 && stoch.k < 40) ||               // BB Oversold + RSI + Stoch
     (rsi < 30 && sma20 > sma50)
   ) {
@@ -456,7 +440,7 @@ function generateTraderComment(signal) {
   }
   // SHORT сигнал (УЖЕСТОЧЕНО)
   else if (
-    (rsi > 65 && macd.histogram < 0 && stoch.k > 70) || // RSI + MACD + Stoch
+    (rsi > 65 && macd.histogram < 0 && stoch.k > 70 && adx > 25) || // RSI + MACD + Stoch + Strong Trend
     (price > bb.upper && rsi > 60 && stoch.k > 60) ||                // BB Overbought + RSI + Stoch
     (rsi > 70 && sma20 < sma50)
   ) {
@@ -470,34 +454,58 @@ function generateTraderComment(signal) {
   
   if (!signal || confidence < CONFIG.minConfidence) return null;
   
-  // Расчет цен (ФИКСИРОВАННЫЙ SL/RR)
+  // Расчет цен (УЛУЧШЕННЫЙ с зонами ликвидности)
   const entry = price;
   let sl, tp, rrRatio;
-  const liquidityZoneUsed = false; // Больше не используется
+  let liquidityZoneUsed = false;
   
-  // Расчет фиксированного SL в процентах
-  const slPercent = CONFIG.fixedSLPercent / 100; // 0.25% -> 0.0025
-  const rrMultiplier = CONFIG.minRRRatio; // 5.0
+  // Находим зоны ликвидности
+  const liquidityZones = findLiquidityZones(priceHistory, 20);
+  
+  const atrMultiplier = 2.5;
+  const slDistance = atr * atrMultiplier;
   
   if (signal === 'LONG') {
-    // SL: Entry - 0.25%
-    sl = entry * (1 - slPercent);
-    // TP: Entry + (Entry - SL) * RR_Multiplier
-    tp = entry + (entry - sl) * rrMultiplier;
-    rrRatio = rrMultiplier; // Фиксированное значение
+    // Базовый стоп-лосс
+    let calculatedSL = entry - slDistance;
+    
+    // Ищем ближайшую зону поддержки ниже цены
+    const supportZone = findNearestLiquidityZone(entry, liquidityZones, 'support');
+    
+    // Если есть зона поддержки и она ниже цены, размещаем стоп чуть ниже неё
+    if (supportZone && supportZone.price < entry) {
+      const zoneBasedSL = supportZone.price * 0.997; // На 0.3% ниже зоны
+      // Используем зону, если она не слишком далеко
+      if (entry - zoneBasedSL < slDistance * 1.5) {
+        calculatedSL = zoneBasedSL;
+        liquidityZoneUsed = true;
+      }
+    }
+    
+    sl = calculatedSL;
+    tp = entry + (entry - sl) * CONFIG.minRRRatio;
+    rrRatio = (tp - entry) / (entry - sl);
   } else {
-    // SL: Entry + 0.25%
-    sl = entry * (1 + slPercent);
-    // TP: Entry - (SL - Entry) * RR_Multiplier
-    tp = entry - (sl - entry) * rrMultiplier;
-    rrRatio = rrMultiplier; // Фиксированное значение
+    // Базовый стоп-лосс
+    let calculatedSL = entry + slDistance;
+    
+    // Ищем ближайшую зону сопротивления выше цены
+    const resistanceZone = findNearestLiquidityZone(entry, liquidityZones, 'resistance');
+    
+    if (resistanceZone && resistanceZone.price > entry) {
+      const zoneBasedSL = resistanceZone.price * 1.003; // На 0.3% выше зоны
+      if (zoneBasedSL - entry < slDistance * 1.5) {
+        calculatedSL = zoneBasedSL;
+        liquidityZoneUsed = true;
+      }
+    }
+    
+    sl = calculatedSL;
+    tp = entry - (sl - entry) * CONFIG.minRRRatio;
+    rrRatio = (entry - tp) / (sl - entry);
   }
   
-  // Проверка, что TP и SL не пересекаются (для SHORT TP < SL, для LONG TP > SL)
-  if ((signal === 'LONG' && tp <= sl) || (signal === 'SHORT' && tp >= sl)) {
-    // Этого не должно произойти с фиксированным RR > 1, но для безопасности
-    return null;
-  }
+  if (rrRatio < CONFIG.minRRRatio) return null;
   
   // Определение уровня
   const isGodTier = 
@@ -527,9 +535,8 @@ function generateTraderComment(signal) {
       rsi: Math.round(rsi),
       volatility: parseFloat(volatility.toFixed(2)),
       stochK: stoch.k,
-      // ADX и ATR теперь заглушки, так как CoinGecko sparkline data не позволяет их корректно рассчитать.
-      adx: adx, 
-      atr: atr,
+      adx: Math.round(adx),
+      atr: parseFloat(atr.toFixed(6)),
       ema20: ema20 ? parseFloat(ema20.toFixed(6)) : null,
       ema50: ema50 ? parseFloat(ema50.toFixed(6)) : null,
       ema100: ema100 ? parseFloat(ema100.toFixed(6)) : null
@@ -541,46 +548,9 @@ function generateTraderComment(signal) {
 }
 
 // ==================== ПОЛУЧЕНИЕ ДАННЫХ ====================
-async function fetchOHLCVData(symbol) {
-  const productId = `${symbol.toUpperCase()}-USD`; // Coinbase Pro использует -USD
-  try {
-    const url = `${CONFIG.coinbaseApiUrl}/products/${productId}/candles?granularity=${CONFIG.klinesGranularity}`;
-    
-    // Coinbase Pro API не требует ключа для публичных данных
-    const response = await axios.get(url);
-    
-    if (response.status !== 200) {
-      console.error(`❌ Ошибка Coinbase Pro API для ${productId}: ${response.status}`);
-      return null;
-    }
-    
-    // Coinbase Pro формат: [time, low, high, open, volume, close]
-    // Сортируем в хронологическом порядке (Coinbase возвращает в обратном)
-    const sortedData = response.data.sort((a, b) => a[0] - b[0]);
-    
-    // Преобразуем Klines в массив объектов OHLCV
-    return sortedData.map(kline => ({
-      open: parseFloat(kline[3]),
-      high: parseFloat(kline[2]),
-      low: parseFloat(kline[1]),
-      close: parseFloat(kline[5]),
-      volume: parseFloat(kline[4])
-    }));
-  } catch (error) {
-    // Игнорируем ошибки, если пара не найдена (например, COINUSDT)
-    if (error.response && error.response.status === 404) {
-      console.log(`⚠️ Пара ${productId} не найдена на Coinbase Pro.`);
-      return null;
-    }
-    console.error(`❌ Ошибка получения OHLCV для ${productId}:`, error.message);
-    return null;
-  }
-}
-
 async function fetchMarketData() {
   try {
-    // Используем CoinGecko только для получения списка топ-монет
-    const url = `${CONFIG.apiUrl}/coins/markets?vs_currency=usd&order=volume_desc&per_page=${CONFIG.topCoins}&page=1&price_change_percentage=1h,24h`;
+    const url = `${CONFIG.apiUrl}/coins/markets?vs_currency=usd&order=volume_desc&per_page=${CONFIG.topCoins}&page=1&sparkline=true&price_change_percentage=1h,24h`;
     
     const headers = {
       'Accept': 'application/json',
@@ -592,7 +562,7 @@ async function fetchMarketData() {
       headers['x-cg-demo-api-key'] = COINGECKO_API_KEY;
     }
     
-    console.log('📡 Запрос списка топ-монет к CoinGecko API...');
+    console.log('📡 Запрос к CoinGecko API...');
     const response = await axios.get(url, { headers });
     
     if (response.status !== 200) {
@@ -618,36 +588,24 @@ async function generateSignals() {
     return [];
   }
   
-  const signals = [];
-  
-  // ФИЛЬТР: Исключаем стейблкоины
-  const filteredCoins = marketData.filter(coin => !STABLECOINS.includes(coin.symbol.toLowerCase()));
-  
-  for (const coin of filteredCoins) {
-    console.log(`\n⏳ Обработка ${coin.symbol.toUpperCase()}...`);
+  const signals = marketData
+    // ФИЛЬТР: Исключаем стейблкоины
+    .filter(coin => !STABLECOINS.includes(coin.symbol.toLowerCase()))
+    .map(coin => {
+      // Используем sparkline_in_7d.price как priceHistory
+      const priceHistory = coin.sparkline_in_7d.price;
+      
+      // Проверяем, достаточно ли данных для анализа
+      if (!priceHistory || priceHistory.length < 100) {
+        return null;
+      }
+      
+      return analyzeSignal(coin, priceHistory);
+    })
+    .filter(signal => signal !== null)
+    .sort((a, b) => b.confidence - a.confidence); // Сортируем по уверенности
     
-    // 1. Получаем OHLCV данные с Binance
-    const ohlcvData = await fetchOHLCVData(coin.symbol);
-    
-    if (!ohlcvData || ohlcvData.length < 100) {
-      console.log(`⚠️ Недостаточно OHLCV данных для ${coin.symbol}. Пропускаем.`);
-      continue;
-    }
-    
-    // 2. Анализируем сигнал
-    const signal = analyzeSignal(coin, ohlcvData);
-    
-    if (signal) {
-      signals.push(signal);
-    }
-    
-    // Небольшая задержка для соблюдения лимитов Binance (1200 запросов/мин)
-    await new Promise(resolve => setTimeout(resolve, 100)); 
-  }
-  
-  signals.sort((a, b) => b.confidence - a.confidence); // Сортируем по уверенности
-    
-  console.log(`\n✅ Сгенерировано ${signals.length} сигналов.`);
+  console.log(`✅ Сгенерировано ${signals.length} сигналов.`);
   return signals;
 }
 
