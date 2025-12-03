@@ -20,9 +20,10 @@ console.log('🔑 CoinGecko API Key:', COINGECKO_API_KEY ? 'УСТАНОВЛЕН
 const CONFIG = {
   // CoinGecko API
   apiUrl: 'https://api.coingecko.com/api/v3',
-  binanceApiUrl: 'https://api.binance.com/api/v3', // НОВОЕ: Binance API для OHLCV
-  klinesInterval: '1m', // Интервал для Klines (1 минута)
-  klinesLimit: 500, // Количество свечей (500)
+  // Coinbase Pro API (менее агрессивно блокируется на Render)
+  coinbaseApiUrl: 'https://api.pro.coinbase.com', 
+  klinesGranularity: 60, // Интервал для Klines в секундах (60 сек = 1 минута)
+  klinesLimit: 300, // Количество свечей (максимум для Coinbase Pro)
   topCoins: 200,                // ИЗМЕНЕНО: Сканируем топ-200 монет (по запросу пользователя)
   
   // Фильтры
@@ -541,43 +542,37 @@ function generateTraderComment(signal) {
 
 // ==================== ПОЛУЧЕНИЕ ДАННЫХ ====================
 async function fetchOHLCVData(symbol) {
+  const productId = `${symbol.toUpperCase()}-USD`; // Coinbase Pro использует -USD
   try {
-    const url = `${CONFIG.binanceApiUrl}/klines?symbol=${symbol.toUpperCase()}USDT&interval=${CONFIG.klinesInterval}&limit=${CONFIG.klinesLimit}`;
+    const url = `${CONFIG.coinbaseApiUrl}/products/${productId}/candles?granularity=${CONFIG.klinesGranularity}`;
     
-    // Binance API не требует ключа для публичных данных
+    // Coinbase Pro API не требует ключа для публичных данных
     const response = await axios.get(url);
     
     if (response.status !== 200) {
-      console.error(`❌ Ошибка Binance API для ${symbol}: ${response.status}`);
+      console.error(`❌ Ошибка Coinbase Pro API для ${productId}: ${response.status}`);
       return null;
     }
     
+    // Coinbase Pro формат: [time, low, high, open, volume, close]
+    // Сортируем в хронологическом порядке (Coinbase возвращает в обратном)
+    const sortedData = response.data.sort((a, b) => a[0] - b[0]);
+    
     // Преобразуем Klines в массив объектов OHLCV
-    // [
-    //   [
-    //     1499040000000,      // Kline open time
-    //     "0.01634790",       // Open price
-    //     "0.80000000",       // High price
-    //     "0.01575800",       // Low price
-    //     "0.01577100",       // Close price
-    //     "148976.11427815",  // Volume
-    //     ...
-    //   ]
-    // ]
-    return response.data.map(kline => ({
-      open: parseFloat(kline[1]),
+    return sortedData.map(kline => ({
+      open: parseFloat(kline[3]),
       high: parseFloat(kline[2]),
-      low: parseFloat(kline[3]),
-      close: parseFloat(kline[4]),
-      volume: parseFloat(kline[5])
+      low: parseFloat(kline[1]),
+      close: parseFloat(kline[5]),
+      volume: parseFloat(kline[4])
     }));
   } catch (error) {
     // Игнорируем ошибки, если пара не найдена (например, COINUSDT)
-    if (error.response && error.response.status === 400) {
-      console.log(`⚠️ Пара ${symbol}USDT не найдена на Binance.`);
+    if (error.response && error.response.status === 404) {
+      console.log(`⚠️ Пара ${productId} не найдена на Coinbase Pro.`);
       return null;
     }
-    console.error(`❌ Ошибка получения OHLCV для ${symbol}:`, error.message);
+    console.error(`❌ Ошибка получения OHLCV для ${productId}:`, error.message);
     return null;
   }
 }
