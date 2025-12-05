@@ -16,30 +16,29 @@ console.log('✅ Bot token найден');
 console.log('📱 Chat ID:', CHAT_ID || 'НЕ УСТАНОВЛЕН (получите через /chatid)');
 console.log('🔑 CoinGecko API Key:', COINGECKO_API_KEY ? 'УСТАНОВЛЕН' : 'НЕ УСТАНОВЛЕН (работает без ключа, но с лимитами)');
 
-// ==================== НАСТРОЙКИ ТОРГОВЛИ (УЖЕСТОЧЕННЫЕ) ====================
+// ==================== НАСТРОЙКИ ТОРГОВЛИ (ОПТИМИЗИРОВАНО ДЛЯ СКАЛЬПИНГА) ====================
 const CONFIG = {
   // CoinGecko API
   apiUrl: 'https://api.coingecko.com/api/v3',
   topCoins: 250,                // УВЕЛИЧЕНО: Сканируем топ-250 монет
   
   // Фильтры
-  minVolume: 50000000,        // УВЕЛИЧЕНО: $50M минимальный объем
-  minMarketCap: 500000000,    // УВЕЛИЧЕНО: $500M минимальная капитализация
-  minConfidence: 65,          // УВЕЛИЧЕНО: 65% минимальная уверенность
-  minQualityScore: 7,         // УВЕЛИЧЕНО: 7/10 минимальное качество
-  minRRRatio: 3.5,            // УВЕЛИЧЕНО: 1:3.5 минимальное соотношение риск/прибыль
-  minConfirmations: 3,        // НОВОЕ: минимум 3 подтверждения
+  minVolume: 30000000,        // $30M минимальный объем
+  minMarketCap: 300000000,    // $300M минимальная капитализация
+  minConfidence: 60,          // 60% минимальная уверенность
+  minQualityScore: 6,         // УВЕЛИЧЕНО: 6/10 минимальное качество
+  minRRRatio: 3.0,            // УВЕЛИЧЕНО: 1:3 минимальное соотношение риск/прибыль
   
   // Критерии уровней
   godTier: {
-    qualityScore: 9,          // УВЕЛИЧЕНО: было 8
-    confidence: 85,           // УВЕЛИЧЕНО: было 80
-    rrRatio: 4.5              // УВЕЛИЧЕНО: было 4.0
+    qualityScore: 8,
+    confidence: 80,
+    rrRatio: 4.0
   },
   premium: {
-    qualityScore: 7,          // УВЕЛИЧЕНО: было 6
-    confidence: 65,           // УВЕЛИЧЕНО: было 60
-    rrRatio: 3.5              // УВЕЛИЧЕНО: было 3.0
+    qualityScore: 6,
+    confidence: 60,
+    rrRatio: 3.0
   }
 };
 
@@ -47,7 +46,7 @@ const CONFIG = {
 const STABLECOINS = ['usdt', 'usdc', 'usdc.e','dai', 'busd', 'tusd', 'usdp', 'frax', 'ustc', 'eurs'];
 
 // ==================== TELEGRAM BOT ====================
-const bot = new Telegraf(BOT_TOKEN);
+const bot = new Telegraf(BOT_TOKEN );
 
 // Команда /start
 bot.start((ctx) => {
@@ -309,6 +308,7 @@ function generateTraderComment(signal) {
   return comments.length > 0 ? comments.join(' ') : 'Стандартный сетап.';
 }
 
+
 // ==================== АНАЛИЗ СИГНАЛА ====================
 function analyzeSignal(coin, priceHistory) {
   const price = coin.current_price;
@@ -419,7 +419,7 @@ function analyzeSignal(coin, priceHistory) {
   
   // Минимальные требования
   if (qualityScore < CONFIG.minQualityScore) return null;
-  if (confirmations.length < CONFIG.minConfirmations) return null;
+  if (confirmations.length < 2) return null;
   
   // Определение сигнала
   let signal = null;
@@ -453,8 +453,7 @@ function analyzeSignal(coin, priceHistory) {
   }
   
   if (!signal || confidence < CONFIG.minConfidence) return null;
-  
-  // Расчет цен (УЛУЧШЕННЫЙ с зонами ликвидности)
+   // Расчет цен (УЛУЧШЕННЫЙ с зонами ликвидности)
   const entry = price;
   let sl, tp, rrRatio;
   let liquidityZoneUsed = false;
@@ -550,6 +549,9 @@ function analyzeSignal(coin, priceHistory) {
 // ==================== ПОЛУЧЕНИЕ ДАННЫХ ====================
 async function fetchMarketData() {
   try {
+    // ВНИМАНИЕ: CoinGecko API с sparkline=true дает только дневные цены.
+    // Для реального скальпинга вам нужно будет переключиться на эндпоинт OHLC 
+    // и запрашивать 1-часовые свечи.
     const url = `${CONFIG.apiUrl}/coins/markets?vs_currency=usd&order=volume_desc&per_page=${CONFIG.topCoins}&page=1&sparkline=true&price_change_percentage=1h,24h`;
     
     const headers = {
@@ -686,6 +688,7 @@ async function runSignalsTask() {
       return;
     }
     
+  
     const signalsToSend = signals; 
     console.log(`📤 Отправка ${signalsToSend.length} сигналов...`);
     
@@ -716,7 +719,7 @@ async function start() {
     bot.launch();
     console.log('✅ Бот запущен (long polling)');
     
-    // Планируем CRON задачу каждые 10 минут
+    // Планируем CRON задачу каждые 10 минут (БЫЛО 5)
     cron.schedule('*/10 * * * *', runSignalsTask);
     console.log('✅ CRON задача запланирована (каждые 10 минут)');
     
