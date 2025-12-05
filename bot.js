@@ -1,675 +1,244 @@
-const { Telegraf } = require('telegraf');
-const axios = require('axios');
-const cron = require('node-cron');
 
-const BOT_TOKEN = process.env.TELEGRAM_BOT_TOKEN;
-const CHAT_ID = process.env.TELEGRAM_CHAT_ID;
+import os
+import json
+import random
+import requests
 
-console.log('🤖 Запуск MEXC Signals Bot...');
+# =============== НАСТРОЙКИ ===============
 
-if (!BOT_TOKEN) {
-  console.error('❌ Нет TELEGRAM_BOT_TOKEN!');
-  process.exit(1);
-}
+TELEGRAM_TOKEN = os.environ.get("TELEGRAM_TOKEN")
 
-if (!CHAT_ID) {
-  console.error('❌ Нет TELEGRAM_CHAT_ID!');
-  process.exit(1);
-}
+# =============== ПАМЯТЬ ===============
+# chat_id -> {"history": [...], "last_intent": str}
+MEMORY = {}
 
-const bot = new Telegraf(BOT_TOKEN);
+# =============== СПРАВОЧНЫЕ ДАННЫЕ ===============
 
-// ==================== НАСТРОЙКИ ====================
-const CONFIG = {
-  exchange: 'MEXC',
-  apiUrl: 'https://api.mexc.com',
-  minVolume: 50000,      // 50K USDT для анализа
-  scanInterval: '*/5 * * * *', // Каждые 5 минут
-  minChangeForSignal: 1.5, // Минимальное изменение 1.5%
-  minConfidence: 55,      // Минимальная уверенность 55%
-  maxSignalsPerScan: 3,   // Максимум сигналов за сканирование
-  scanLimit: 30,          // Максимум пар для сканирования
-  volumeMultiplier: 1.2   // Минимальный множитель объема
-};
+TIMEFRAMES = [
+    "нескольких дней",
+    "недели",
+    "двух недель",
+    "месяца",
+    "двух-трёх месяцев",
+    "лунного цикла",
+    "ближайшего времени",
+    "нескольких месяцев",
+]
 
-// Хранилище отправленных сигналов (чтобы не дублировать)
-const sentSignals = new Map();
-const SIGNAL_COOLDOWN = 30 * 60 * 1000; // 30 минут
+CRYPTO_KEYWORDS = [
+    "крипт", "биток", "биткоин", "bitcoin", "эфир", "ether", "eth",
+    "altcoin", "альт", "альты", "токен", "монет", "coin", "коин",
+    "чарт", "график", "шорт", "лонг", "long", "short", "pump", "памп",
+    "дамп", "dump", "binance", "bybit", "okx", "futures", "фьючерс",
+    "спот", "spot", "dex", "cex",
+]
 
-// ==================== MEXC API ====================
-async function getMexcTickers() {
-  try {
-    console.log('📡 Запрос к MEXC API...');
-    
-    const response = await axios.get(`${CONFIG.apiUrl}/api/v3/ticker/24hr`, {
-      timeout: 15000,
-      headers: {
-        'User-Agent': 'Mozilla/5.0'
-      }
-    });
-    
-    console.log(`✅ Получено ${response.data.length} пар`);
-    
-    // Фильтруем USDT пары
-    const usdtPairs = response.data
-      .filter(ticker => ticker.symbol.endsWith('USDT'))
-      .map(ticker => {
-        const change = parseFloat(ticker.priceChangePercent);
-        const volume = parseFloat(ticker.quoteVolume);
-        const price = parseFloat(ticker.lastPrice);
-        
-        return {
-          symbol: ticker.symbol,
-          price: price,
-          change: change,
-          volume: volume,
-          high: parseFloat(ticker.highPrice),
-          low: parseFloat(ticker.lowPrice),
-          volumeValue: volume
-        };
-      })
-      .filter(ticker => 
-        ticker.volumeValue >= CONFIG.minVolume && 
-        ticker.price > 0.000001
-      );
-    
-    console.log(`✅ Отфильтровано ${usdtPairs.length} пар с объемом > $${(CONFIG.minVolume/1000).toFixed(0)}K`);
-    return usdtPairs;
-    
-  } catch (error) {
-    console.error('❌ Ошибка MEXC API:', error.message);
-    return [];
-  }
-}
+def detect_intent(text: str) -> str:
+    t = text.lower()
+    if "когда" in t:
+        return "when"
+    if "стоит ли" in t or "есть ли смысл" in t or "надо ли" in t:
+        return "should"
+    if " ли " in t or "получится" in t or "смогу ли" in t or "будет ли" in t:
+        return "yesno"
+    return "open"
 
-// Получаем пары для сканирования
-async function getPairsForScanning() {
-  try {
-    const allPairs = await getMexcTickers();
-    if (allPairs.length === 0) return [];
-    
-    // Сортируем по абсолютному изменению (самые волатильные)
-    const sortedPairs = [...allPairs]
-      .sort((a, b) => Math.abs(b.change) - Math.abs(a.change))
-      .slice(0, CONFIG.scanLimit);
-    
-    // Фильтруем по минимальному изменению
-    const filteredPairs = sortedPairs.filter(pair => 
-      Math.abs(pair.change) >= CONFIG.minChangeForSignal
-    );
-    
-    console.log(`🔍 Для сканирования: ${filteredPairs.length} пар (изменение > ${CONFIG.minChangeForSignal}%)`);
-    
-    // Если мало пар с большим изменением, берем просто топ по волатильности
-    if (filteredPairs.length < 10) {
-      console.log(`📊 Мало пар с изменением > ${CONFIG.minChangeForSignal}%, беру топ-${CONFIG.scanLimit} по волатильности`);
-      return sortedPairs;
-    }
-    
-    return filteredPairs;
-  } catch (error) {
-    console.error('❌ Ошибка получения пар для сканирования:', error.message);
-    return [];
-  }
-}
 
-// Получаем данные свечей
-async function getMexcKlines(symbol, interval = '15m', limit = 50) {
-  try {
-    const response = await axios.get(`${CONFIG.apiUrl}/api/v3/klines`, {
-      params: {
-        symbol: symbol,
-        interval: interval,
-        limit: limit
-      },
-      timeout: 8000
-    });
-    
-    return response.data.map(k => ({
-      open: parseFloat(k[1]),
-      high: parseFloat(k[2]),
-      low: parseFloat(k[3]),
-      close: parseFloat(k[4]),
-      volume: parseFloat(k[5])
-    }));
-    
-  } catch (error) {
-    console.error(`❌ Ошибка свечей ${symbol}:`, error.message);
-    return [];
-  }
-}
+# =============== ФРАЗЫ ЗАРЫ (ТЁМНАЯ КРИПТО-ВЕДЬМА) ===============
 
-// ==================== ИНДИКАТОРЫ ====================
-function calculateRSI(closes, period = 14) {
-  if (!closes || closes.length < period + 1) return 50;
-  
-  let gains = 0;
-  let losses = 0;
-  
-  for (let i = 1; i <= period; i++) {
-    const change = closes[closes.length - i] - closes[closes.length - i - 1];
-    if (change > 0) gains += change;
-    else losses -= change;
-  }
-  
-  const avgGain = gains / period;
-  const avgLoss = losses / period;
-  
-  if (avgLoss === 0) return 100;
-  if (avgGain === 0) return 0;
-  
-  const rs = avgGain / avgLoss;
-  return 100 - (100 / (1 + rs));
-}
+INTROS = [
+    "🌘🧿 {name}, ночной рынок шепчет твой вопрос… я слышу его в треске свечей.",
+    "🌑🔮 {name}, тьма над графиками сгущается, и монеты шевелятся, как духи в кандалах.",
+    "🌙💹 {name}, ты пришёл с вопросом о крипте — и луна над свечами стала ярче…",
+    "🕯️🧿 {name}, я чувствую, как тревога по депозиту стучит у тебя в груди сильнее, чем биток по рынку.",
+    "🌫️📊 {name}, туман над графиком густой, но для меня линии судьбы всё равно видны…",
+]
 
-function calculateVolumeSpike(currentVolume, avgVolume) {
-  if (avgVolume === 0) return 1;
-  return currentVolume / avgVolume;
-}
+SIGNS = [
+    "Карты показывают знак *Дикого рынка* — хаос, волатильность и нервы на пределе.",
+    "Передо мной вспыхивает символ *Свечи-безумца* — резкие тени, вспышки вверх и вниз.",
+    "Я вижу *Бесконечный боковик* — энергия копится, но не показывает, куда рванёт.",
+    "Появляется знак *Фантомного пампа* — рост, похожий на чудо, но с привкусом обмана.",
+    "Карта шепчет о *Плече бесовском* — то, что быстро поднимает, может так же быстро утянуть в бездну.",
+    "Появляется знак *Уставшего тренда* — движение уже хочет лечь спать, а не бежать дальше.",
+    "Я вижу символ *Злой ликвидности* — там, где соберут стопы тех, кто зашёл без плана.",
+    "Карты говорят о *Монете-призраке* — много разговоров, мало реального объёма.",
+]
 
-function calculateSupportResistance(highs, lows, currentPrice) {
-  if (highs.length < 10 || lows.length < 10) return { nearSupport: false, nearResistance: false };
-  
-  const recentHighs = highs.slice(-20);
-  const recentLows = lows.slice(-20);
-  
-  const resistance = Math.max(...recentHighs);
-  const support = Math.min(...recentLows);
-  
-  const priceRange = resistance - support;
-  if (priceRange === 0) return { nearSupport: false, nearResistance: false };
-  
-  const pricePosition = (currentPrice - support) / priceRange;
-  
-  return {
-    nearSupport: pricePosition < 0.3,
-    nearResistance: pricePosition > 0.7,
-    support: support,
-    resistance: resistance
-  };
-}
+INTERP = [
+    "Это значит, что рынок сейчас больше испытывает твою выдержку, чем твой анализ.",
+    "Вижу, как страх упустить шанс борется в тебе со страхом потерять — классическая битва на крипторынке.",
+    "Судьба намекает: если эмоции рулят входом и выходом — рынок уже выиграл ещё до сделки.",
+    "Похоже, ты слишком смотришь на чужие скрины профита и мало — на свой риск и правила.",
+    "Большая часть боли в крипте — не от свечей, а от ожиданий, которые ты сам себе нарисовал.",
+    "Здесь я вижу, что ты ищешь один идеальный вход… а рынок любит тех, кто действует системно, а не по волшебной точке.",
+    "Энергия вопроса тяжёлая: не монета опасна, а отношение к ней — как к лотерейному билету.",
+]
 
-// ==================== АНАЛИЗ ПАРЫ ====================
-async function analyzePairForSignal(pair) {
-  try {
-    // Проверяем кд для этой пары
-    const now = Date.now();
-    const lastSignalTime = sentSignals.get(pair.symbol);
-    if (lastSignalTime && (now - lastSignalTime) < SIGNAL_COOLDOWN) {
-      console.log(`⏳ Пропускаем ${pair.symbol} (в кд)`);
-      return null;
-    }
-    
-    // Получаем свечи
-    const klines = await getMexcKlines(pair.symbol, '15m', 40);
-    if (klines.length < 20) return null;
-    
-    const closes = klines.map(k => k.close);
-    const highs = klines.map(k => k.high);
-    const lows = klines.map(k => k.low);
-    const volumes = klines.map(k => k.volume);
-    
-    const currentPrice = closes[closes.length - 1];
-    const currentVolume = volumes[volumes.length - 1];
-    
-    // Рассчитываем индикаторы
-    const rsi = calculateRSI(closes);
-    const avgVolume = volumes.slice(-20).reduce((a, b) => a + b, 0) / 20;
-    const volumeSpike = calculateVolumeSpike(currentVolume, avgVolume);
-    
-    const sr = calculateSupportResistance(highs, lows, currentPrice);
-    
-    // Определяем потенциальный сигнал
-    let potentialSignal = null;
-    let confidence = 0;
-    let reasons = [];
-    
-    // УСЛОВИЯ ДЛЯ LONG
-    const longScore = 
-      (rsi < 35 ? 25 : 0) +
-      (volumeSpike > CONFIG.volumeMultiplier ? 20 : 0) +
-      (sr.nearSupport ? 15 : 0) +
-      (pair.change > 2 ? 15 : (pair.change > 0 ? 10 : 0)) +
-      (currentPrice < pair.high * 0.95 ? 10 : 0);
-    
-    // УСЛОВИЯ ДЛЯ SHORT
-    const shortScore = 
-      (rsi > 65 ? 25 : 0) +
-      (volumeSpike > CONFIG.volumeMultiplier ? 20 : 0) +
-      (sr.nearResistance ? 15 : 0) +
-      (pair.change < -2 ? 15 : (pair.change < 0 ? 10 : 0)) +
-      (currentPrice > pair.low * 1.05 ? 10 : 0);
-    
-    // Выбираем сигнал с наибольшим счетом
-    if (longScore >= 50 && longScore > shortScore) {
-      potentialSignal = 'LONG';
-      confidence = Math.min(longScore, 95);
-      
-      if (rsi < 35) reasons.push(`RSI ${Math.round(rsi)} (перепродан)`);
-      if (volumeSpike > CONFIG.volumeMultiplier) reasons.push(`Объем x${volumeSpike.toFixed(1)}`);
-      if (sr.nearSupport) reasons.push(`Возле поддержки`);
-      if (pair.change > 0) reasons.push(`Рост ${pair.change.toFixed(1)}%`);
-      
-    } else if (shortScore >= 50 && shortScore > longScore) {
-      potentialSignal = 'SHORT';
-      confidence = Math.min(shortScore, 95);
-      
-      if (rsi > 65) reasons.push(`RSI ${Math.round(rsi)} (перекуплен)`);
-      if (volumeSpike > CONFIG.volumeMultiplier) reasons.push(`Объем x${volumeSpike.toFixed(1)}`);
-      if (sr.nearResistance) reasons.push(`Возле сопротивления`);
-      if (pair.change < 0) reasons.push(`Падение ${Math.abs(pair.change).toFixed(1)}%`);
-    }
-    
-    // Проверяем минимальную уверенность
-    if (!potentialSignal || confidence < CONFIG.minConfidence || reasons.length < 2) {
-      return null;
-    }
-    
-    // Рассчитываем уровни
-    const entry = currentPrice;
-    let tp, sl;
-    
-    if (potentialSignal === 'LONG') {
-      sl = entry * 0.97; // -3%
-      tp = entry * 1.06; // +6% (RR 1:2)
-    } else {
-      sl = entry * 1.03; // +3%
-      tp = entry * 0.94; // -6% (RR 1:2)
-    }
-    
-    const rrRatio = '1:2';
-    const tier = confidence >= 75 ? '🔥 PREMIUM' : confidence >= 60 ? '💎 STANDARD' : '📊 BASIC';
-    
-    // Сохраняем время отправки
-    sentSignals.set(pair.symbol, now);
-    
-    return {
-      pair: pair.symbol.replace('USDT', '/USDT'),
-      symbol: pair.symbol,
-      signal: potentialSignal,
-      entry: entry.toFixed(8),
-      tp: tp.toFixed(8),
-      sl: sl.toFixed(8),
-      confidence: Math.round(confidence),
-      rrRatio: rrRatio,
-      tier: tier,
-      change24h: pair.change.toFixed(2),
-      volume24h: (pair.volume / 1000).toFixed(0) + 'K',
-      rsi: Math.round(rsi),
-      volumeSpike: volumeSpike.toFixed(1),
-      reasons: reasons,
-      timestamp: new Date()
-    };
-    
-  } catch (error) {
-    console.error(`❌ Ошибка анализа ${pair.symbol}:`, error.message);
-    return null;
-  }
-}
+ANSWERS_YESNO = [
+    "✔ По правде скажу: **скорее да, шанс хорош**, но только если ты не заходишь всем депозитом, будто в последний день жизни.",
+    "✔ Судьба шепчет: **если действовать по плану — да, потенциал есть**, если влететь с эмоций — рынок заберёт своё.",
+    "✔ Вижу: **для дисциплинированного трейдера это “да”**, для азартного — громкое “нет”.",
+]
 
-// ==================== АВТОМАТИЧЕСКОЕ СКАНИРОВАНИЕ ====================
-async function performAutoScan() {
-  console.log('\n' + '='.repeat(60));
-  console.log('🎯 АВТОМАТИЧЕСКОЕ СКАНИРОВАНИЕ ЗАПУЩЕНО');
-  console.log('='.repeat(60));
-  
-  const scanStartTime = Date.now();
-  let signalsFound = 0;
-  
-  try {
-    // Получаем пары для сканирования
-    const pairsToScan = await getPairsForScanning();
-    
-    if (pairsToScan.length === 0) {
-      console.log('❌ Нет пар для сканирования');
-      await sendStatusToChat('❌ Не удалось получить данные с биржи');
-      return;
-    }
-    
-    console.log(`📊 Начинаю анализ ${pairsToScan.length} пар...`);
-    
-    const allSignals = [];
-    
-    // Анализируем каждую пару
-    for (let i = 0; i < pairsToScan.length; i++) {
-      const pair = pairsToScan[i];
-      console.log(`🔍 [${i+1}/${pairsToScan.length}] Анализ ${pair.symbol} (${pair.change > 0 ? '+' : ''}${pair.change.toFixed(2)}%)`);
-      
-      const signal = await analyzePairForSignal(pair);
-      
-      if (signal) {
-        allSignals.push(signal);
-        console.log(`✅ Найден сигнал: ${signal.signal} ${signal.pair} (${signal.confidence}%)`);
-        signalsFound++;
-      }
-      
-      // Задержка между запросами
-      if (i < pairsToScan.length - 1) {
-        await new Promise(resolve => setTimeout(resolve, 300));
-      }
-    }
-    
-    // Сортируем сигналы по уверенности
-    allSignals.sort((a, b) => b.confidence - a.confidence);
-    
-    // Отправляем лучшие сигналы
-    const signalsToSend = allSignals.slice(0, CONFIG.maxSignalsPerScan);
-    
-    if (signalsToSend.length > 0) {
-      console.log(`📤 Отправляю ${signalsToSend.length} лучших сигналов...`);
-      
-      for (const signal of signalsToSend) {
-        await sendSignalToChat(signal);
-        await new Promise(resolve => setTimeout(resolve, 1500)); // Задержка между отправками
-      }
-      
-      await sendStatusToChat(`✅ Сканирование завершено! Найдено ${signalsFound} сигналов, отправлено ${signalsToSend.length}`);
-      
-    } else {
-      console.log('ℹ️ Сигналов не найдено');
-      await sendStatusToChat(`ℹ️ Сканирование завершено. Сигналов не найдено. Проанализировано ${pairsToScan.length} пар`);
-    }
-    
-    const scanTime = ((Date.now() - scanStartTime) / 1000).toFixed(1);
-    console.log(`⏱ Время сканирования: ${scanTime} сек`);
-    console.log(`📊 Найдено сигналов: ${signalsFound}`);
-    console.log('='.repeat(60));
-    
-  } catch (error) {
-    console.error('❌ Критическая ошибка сканирования:', error.message);
-    await sendStatusToChat(`❌ Ошибка сканирования: ${error.message}`);
-  }
-}
+ANSWERS_WHEN = [
+    "✔ По срокам: **чёткой даты судьба не даёт**, но в течение {timeframe} рынок покажет движение, где важнее быть готовым, чем угадывать свечу.",
+    "✔ Карты шепчут: **ещё {timeframe} рынок будет испытывать терпение, а потом покажет более ясное направление**.",
+    "✔ Вижу: **для тебя критичным будет период около {timeframe}** — если к тому моменту ты выработаешь свою систему.",
+]
 
-// ==================== ОТПРАВКА В ЧАТ ====================
-async function sendSignalToChat(signal) {
-  try {
-    const emoji = signal.signal === 'LONG' ? '🟢' : '🔴';
-    const signalEmoji = signal.signal === 'LONG' ? '📈' : '📉';
-    
-    const message = `
-${signalEmoji} <b>${signal.tier} СИГНАЛ</b> ${emoji}
+ANSWERS_SHOULD = [
+    "✔ Совет ведьмы рынка: **входить стоит только с тем, что не жалко потерять**, и лишь туда, что ты сам понимаешь, а не по словам из чата.",
+    "✔ Слышу я: **если ты не можешь спокойно смотреть на просадку — не трогай плечи и большие объёмы**.",
+    "✔ Ответ такой: **сначала напиши свои правила входа и выхода, а уже потом спрашивай судьбу, стоит ли заходить.**",
+]
 
-🏦 <b>Биржа:</b> MEXC Spot
-📊 <b>Пара:</b> ${signal.pair}
-🎯 <b>Тип:</b> ${signal.signal}
+ANSWERS_OPEN = [
+    "✔ Общий прогноз: **крипта ещё покажет и пампы, и дампы**, главное — чтобы твоя психика выжила вместе с депозитом.",
+    "✔ Судьба шепчет: **рынок может стать для тебя школой дисциплины**, если перестанешь относиться к нему как к казино.",
+    "✔ Вижу: **твоя настоящая прибыль будет не только в монетах, но и в опыте, который ты через всё это пройдёшь.**",
+    "✔ Прогноз такой: движение будет, но **не так быстро и не так ровно, как тебе рисует фантазия**.",
+]
 
-💰 <b>Текущая цена:</b> $${signal.entry}
-📈 <b>Изменение 24ч:</b> ${signal.change24h > 0 ? '+' : ''}${signal.change24h}%
-💎 <b>Объем 24ч:</b> $${signal.volume24h}
+ENDINGS = [
+    "🌒🧿 Запомни: рынок слышит тех, кто уважает риск, а не только жаждет профита.",
+    "🌘🔮 Карты сказали своё… не предавай себя ради чужих ожиданий и чужих сигналов.",
+    "🌑✨ Помни, золотце моё: самое страшное — не красная свеча, а потерянная голова.",
+    "🌙💹 Пусть рынок будет твоим учителем, а не палачом.",
+]
 
-🎯 <b>Точка входа:</b> $${signal.entry}
-✅ <b>Тейк-профит:</b> $${signal.tp}
-🛑 <b>Стоп-лосс:</b> $${signal.sl}
+# =============== ПАМЯТНЫЕ ФРАЗЫ (ТЁМНАЯ МИСТИКА) ===============
 
-📊 <b>Соотношение RR:</b> ${signal.rrRatio}
-🔮 <b>Уверенность:</b> ${signal.confidence}%
-📈 <b>RSI:</b> ${signal.rsi}
+MEMORY_REPEAT_INTENT = [
+    "🌘♾ {name}, ты снова спрашиваешь об одном и том же… видно, ответ судьбы тебе пока не по душе.",
+    "🌑🧿 Я чувствую повтор — рынок уже показывал тебе этот урок, а ты всё ходишь по кругу.",
+    "🌒🔮 Энергия вопроса та же… значит, внутри у тебя ответ уже есть, но ты боишься его принять.",
+]
 
-📋 <b>Причины сигнала:</b>
-${signal.reasons.map(r => `• ${r}`).join('\n')}
+MEMORY_NEW = [
+    "🌫️✨ Вижу смену ветра — теперь ты смотришь на рынок под другим углом.",
+    "🌙🔮 Новая тень легла на график, {name}… значит, и мысли твои начали меняться.",
+    "🌌🧿 Ты двигаешься, как и рынок — это хороший знак, застой хуже любой просадки.",
+]
 
-⏰ <b>Время сигнала:</b> ${signal.timestamp.toLocaleTimeString('ru-RU')}
-    `.trim();
-    
-    await bot.telegram.sendMessage(CHAT_ID, message, { parse_mode: 'HTML' });
-    console.log(`✅ Сигнал отправлен: ${signal.pair}`);
-    
-  } catch (error) {
-    console.error(`❌ Ошибка отправки сигнала ${signal?.pair}:`, error.message);
-  }
-}
 
-async function sendStatusToChat(message) {
-  try {
-    const statusMessage = `
-🤖 <b>Статус сканирования</b>
+def get_memory_effect(chat_id, intent, name):
+    if chat_id not in MEMORY:
+        return None
+    hist = MEMORY[chat_id].get("history", [])
+    if not hist:
+        return None
 
-${message}
+    last_intent = MEMORY[chat_id].get("last_intent")
+    candidates = []
 
-⏰ <b>Время:</b> ${new Date().toLocaleTimeString('ru-RU')}
-📅 <b>Дата:</b> ${new Date().toLocaleDateString('ru-RU')}
+    if last_intent == intent:
+        candidates.append(random.choice(MEMORY_REPEAT_INTENT).format(name=name))
+    else:
+        candidates.append(random.choice(MEMORY_NEW).format(name=name))
 
-<i>Следующее сканирование через 5 минут</i>
-    `.trim();
-    
-    await bot.telegram.sendMessage(CHAT_ID, statusMessage, { parse_mode: 'HTML' });
-  } catch (error) {
-    console.error('❌ Ошибка отправки статуса:', error.message);
-  }
-}
+    return random.choice(candidates) if candidates else None
 
-// ==================== КОМАНДЫ БОТА ====================
-bot.start((ctx) => {
-  const welcome = `
-🤖 <b>MEXC Signals Auto-Bot</b>
 
-✅ <b>Автоматическое сканирование работает!</b>
+def generate_prediction(name: str, question: str) -> str:
+    intent = detect_intent(question)
 
-🏦 <b>Биржа:</b> ${CONFIG.exchange}
-⏰ <b>Сканирование:</b> каждые 5 минут
-📊 <b>Пар за сканирование:</b> до ${CONFIG.scanLimit}
-🎯 <b>Минимальное изменение:</b> ${CONFIG.minChangeForSignal}%
-💰 <b>Минимальный объем:</b> $${(CONFIG.minVolume/1000).toFixed(0)}K
+    intro = random.choice(INTROS).format(name=name)
+    sign = random.choice(SIGNS)
+    interp = random.choice(INTERP)
 
-<b>📈 Анализируем:</b>
-• RSI (перекупленность/перепроданность)
-• Объем торгов (спайки)
-• Уровни поддержки/сопротивления
-• Ценовые движения
+    if intent == "yesno":
+        ans = random.choice(ANSWERS_YESNO)
+    elif intent == "when":
+        ans = random.choice(ANSWERS_WHEN).format(timeframe=random.choice(TIMEFRAMES))
+    elif intent == "should":
+        ans = random.choice(ANSWERS_SHOULD)
+    else:
+        ans = random.choice(ANSWERS_OPEN)
 
-<b>📱 Команды:</b>
-/start - информация
-/scan - запустить сканирование сейчас
-/top - топ движений за 24ч
-/status - текущий статус
-/test - проверка API
+    ending = random.choice(ENDINGS)
 
-✅ <b>Сигналы приходят автоматически в канал!</b>
-  `.trim();
-  
-  ctx.reply(welcome, { parse_mode: 'HTML' });
-});
+    return f"{intro}\n\n{sign}\n\n{interp}\n\n{ans}\n\n{ending}"
 
-bot.command('scan', async (ctx) => {
-  try {
-    await ctx.reply('🚀 Запускаю внеочередное сканирование...');
-    console.log('🚀 Запуск ручного сканирования по команде...');
-    
-    // Запускаем сканирование
-    await performAutoScan();
-    
-    await ctx.reply('✅ Сканирование завершено! Проверьте канал с сигналами.');
-    
-  } catch (error) {
-    await ctx.reply(`❌ Ошибка: ${error.message}`);
-  }
-});
 
-bot.command('top', async (ctx) => {
-  try {
-    await ctx.reply('📊 Ищу топ движений...');
-    
-    const tickers = await getMexcTickers();
-    if (tickers.length === 0) {
-      await ctx.reply('❌ Нет данных от биржи');
-      return;
-    }
-    
-    // Топ роста
-    const topGainers = [...tickers]
-      .sort((a, b) => b.change - a.change)
-      .slice(0, 5);
-    
-    // Топ падения
-    const topLosers = [...tickers]
-      .sort((a, b) => a.change - b.change)
-      .slice(0, 5);
-    
-    let message = `📈 <b>ТОП 5 РОСТА (24ч)</b>\n\n`;
-    
-    topGainers.forEach((t, i) => {
-      message += `${i+1}. <b>${t.symbol}</b>\n`;
-      message += `   💰 $${t.price.toFixed(4)}\n`;
-      message += `   📈 +${t.change.toFixed(2)}%\n`;
-      message += `   🔄 $${(t.volume/1000).toFixed(0)}K\n\n`;
-    });
-    
-    message += `📉 <b>ТОП 5 ПАДЕНИЯ (24ч)</b>\n\n`;
-    
-    topLosers.forEach((t, i) => {
-      message += `${i+1}. <b>${t.symbol}</b>\n`;
-      message += `   💰 $${t.price.toFixed(4)}\n`;
-      message += `   📉 ${t.change.toFixed(2)}%\n`;
-      message += `   🔄 $${(t.volume/1000).toFixed(0)}K\n\n`;
-    });
-    
-    message += `\n📊 Всего пар с объемом > $${(CONFIG.minVolume/1000).toFixed(0)}K: ${tickers.length}`;
-    
-    await ctx.reply(message, { parse_mode: 'HTML' });
-    
-  } catch (error) {
-    await ctx.reply(`❌ Ошибка: ${error.message}`);
-  }
-});
+def send_message(chat_id, text):
+    if not TELEGRAM_TOKEN:
+        return
+    url = f"https://api.telegram.org/bot{TELEGRAM_TOKEN}/sendMessage"
+    try:
+        requests.post(url, json={"chat_id": chat_id, "text": text})
+    except Exception:
+        pass
 
-bot.command('status', async (ctx) => {
-  const now = new Date();
-  const nextScanMinutes = 5 - (now.getMinutes() % 5);
-  
-  const statusMessage = `
-📊 <b>СТАТУС БОТА</b>
 
-🟢 <b>Состояние:</b> Активен
-🏦 <b>Биржа:</b> ${CONFIG.exchange}
-⏰ <b>Следующее сканирование:</b> через ${nextScanMinutes} мин
-📊 <b>Отправлено сигналов:</b> ${sentSignals.size}
-🕒 <b>Время сервера:</b> ${now.toLocaleTimeString('ru-RU')}
+def handle_start(chat_id, name):
+    text = (
+        f"🌑🔮 Здравствуй, {name}.\n\n"
+        "Я — *Зара*, тёмная цыганка-ведьма крипторынка.\n"
+        "Я читаю шёпот свечей, вижу тени пампов и слышу, как твой депозит дрожит вместе с графиком.\n\n"
+        "🧿 Что я делаю:\n"
+        "— гадаю на монетах, движениях и направлениях\n"
+        "— помогаю увидеть, где тебя ведёт рынок, а где — твоя жадность\n"
+        "— говорю о риске и терпении, как ведьма, что пережила не один дамп\n\n"
+        "Просто задай свой вопрос о крипте: монета, вход, выход, движение, срок…\n"
+        "А если хочешь, я отдельно настроюсь на рынок — напиши /crypto\n\n"
+        f"🌘 Ну что, {name}, о чём спросишь Зару?"
+    )
+    send_message(chat_id, text)
 
-<b>Настройки сканирования:</b>
-• Интервал: 5 минут
-• Пар за сканирование: ${CONFIG.scanLimit}
-• Мин. изменение: ${CONFIG.minChangeForSignal}%
-• Мин. объем: $${(CONFIG.minVolume/1000).toFixed(0)}K
-• Мин. уверенность: ${CONFIG.minConfidence}%
 
-<b>Команды:</b>
-/scan - сканировать сейчас
-/top - топ движений
-/test - проверить API
-  `.trim();
-  
-  await ctx.reply(statusMessage, { parse_mode: 'HTML' });
-});
+def handle_crypto_command(chat_id, name):
+    text = (
+        f"💹🌑 {name}, давай взглянем на рынок внимательнее.\n\n"
+        "Опиши мне монету или ситуацию: вход, выход, рост, падение, срок…\n"
+        "Я посмотрю, что шепчут свечи и как ведут себя духи ликвидности.\n\n"
+        "🧿 Чем точнее твой вопрос, тем глубже моё видение."
+    )
+    send_message(chat_id, text)
 
-bot.command('test', async (ctx) => {
-  try {
-    await ctx.reply('🔄 Проверяю подключение к MEXC...');
-    
-    const tickers = await getMexcTickers();
-    
-    if (tickers.length > 0) {
-      await ctx.reply(
-        `✅ MEXC API работает!\n\n` +
-        `📊 Получено пар: ${tickers.length}\n` +
-        `💰 Мин. объем: $${(CONFIG.minVolume/1000).toFixed(0)}K\n` +
-        `📈 Пример: ${tickers[0].symbol} $${tickers[0].price.toFixed(4)} (${tickers[0].change > 0 ? '+' : ''}${tickers[0].change.toFixed(2)}%)`
-      );
-    } else {
-      await ctx.reply('❌ Не удалось получить данные с MEXC');
-    }
-    
-  } catch (error) {
-    await ctx.reply(`❌ Ошибка: ${error.message}`);
-  }
-});
 
-// ==================== ЗАПУСК И НАСТРОЙКА ====================
-async function startBot() {
-  try {
-    console.log('🚀 Инициализация MEXC Auto-Signals Bot...');
-    
-    // Проверяем API
-    console.log('📡 Проверка подключения к MEXC...');
-    const testTickers = await getMexcTickers();
-    
-    if (testTickers.length === 0) {
-      console.log('⚠️  Внимание: MEXC API может быть недоступен');
-    } else {
-      console.log(`✅ MEXC API доступен, получено ${testTickers.length} пар`);
-    }
-    
-    // Запускаем бота
-    await bot.launch({
-      dropPendingUpdates: true,
-      allowedUpdates: ['message']
-    });
-    
-    console.log('✅ Telegram бот запущен!');
-    
-    // Настраиваем крон для автоматического сканирования
-    cron.schedule(CONFIG.scanInterval, () => {
-      console.log(`\n⏰ Время автоматического сканирования!`);
-      performAutoScan();
-    });
-    
-    console.log(`⏰ Автосканирование настроено: каждые 5 минут`);
-    console.log(`📊 Максимум пар за сканирование: ${CONFIG.scanLimit}`);
-    console.log(`🎯 Минимальное изменение: ${CONFIG.minChangeForSignal}%`);
-    
-    // Отправляем стартовое сообщение в канал
-    try {
-      await bot.telegram.sendMessage(
-        CHAT_ID,
-        `🤖 <b>MEXC Auto-Signals Bot запущен!</b>\n\n` +
-        `✅ Автоматическое сканирование активировано\n` +
-        `⏰ Сканирование: каждые 5 минут\n` +
-        `📊 Пар за сканирование: до ${CONFIG.scanLimit}\n` +
-        `🎯 Минимальное изменение: ${CONFIG.minChangeForSignal}%\n` +
-        `💰 Мин. объем: $${(CONFIG.minVolume/1000).toFixed(0)}K\n\n` +
-        `📈 <b>Сигналы будут приходить автоматически!</b>\n\n` +
-        `🔄 Первое сканирование через 1 минуту...`,
-        { parse_mode: 'HTML' }
-      );
-      console.log('✅ Стартовое сообщение отправлено в канал');
-    } catch (error) {
-      console.log('⚠️ Не удалось отправить стартовое сообщение');
-    }
-    
-    // Первое сканирование через 1 минуту после запуска
-    setTimeout(() => {
-      console.log('\n🚀 ЗАПУСК ПЕРВОГО СКАНИРОВАНИЯ');
-      performAutoScan();
-    }, 60000);
-    
-    console.log('\n' + '='.repeat(60));
-    console.log('🤖 БОТ УСПЕШНО ЗАПУЩЕН И РАБОТАЕТ');
-    console.log('='.repeat(60));
-    console.log(`💬 Канал ID: ${CHAT_ID}`);
-    console.log(`⏰ Сканирование: каждые 5 минут`);
-    console.log(`📊 Лимит пар: ${CONFIG.scanLimit}`);
-    console.log(`🎯 Мин. изменение: ${CONFIG.minChangeForSignal}%`);
-    console.log('='.repeat(60));
-    
-  } catch (error) {
-    console.error('❌ Критическая ошибка запуска:', error.message);
-    console.error(error.stack);
-    process.exit(1);
-  }
-}
+def handler(request, response):
+    try:
+        body = json.loads(request.body or "{}")
+    except Exception:
+        body = {}
 
-// Обработчики завершения
-process.once('SIGINT', () => {
-  console.log('\n🛑 Остановка бота...');
-  bot.stop('SIGINT');
-  process.exit(0);
-});
+    message = body.get("message")
+    if not message:
+        return response.status(200).send("ok")
 
-process.once('SIGTERM', () => {
-  console.log('\n🛑 Остановка бота...');
-  bot.stop('SIGTERM');
-  process.exit(0);
-});
+    chat = message.get("chat", {}) or {}
+    chat_id = chat.get("id")
+    if chat_id is None:
+        return response.status(200).send("ok")
 
-// Запуск бота
-startBot();
+    text = message.get("text") or ""
+    from_user = message.get("from", {}) or {}
+    name = from_user.get("first_name") or "золотце"
+
+    lower = text.strip().lower()
+
+    if lower == "/start":
+        handle_start(chat_id, name)
+        return response.status(200).send("ok")
+
+    if lower == "/crypto":
+        handle_crypto_command(chat_id, name)
+        return response.status(200).send("ok")
+
+    intent = detect_intent(text)
+
+    if chat_id not in MEMORY:
+        MEMORY[chat_id] = {"history": [], "last_intent": None}
+
+    memory_effect = get_memory_effect(chat_id, intent, name)
+    prediction = generate_prediction(name, text)
+
+    if memory_effect:
+        prediction = memory_effect + "\n\n" + prediction
+
+    MEMORY[chat_id]["history"].append({"question": text, "intent": intent})
+    MEMORY[chat_id]["last_intent"] = intent
+
+    send_message(chat_id, prediction)
+    return response.status(200).send("ok"
